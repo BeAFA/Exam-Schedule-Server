@@ -21,10 +21,6 @@ def check_exam_schedule_conflict(
         student_id: int,
         exam_id: int,
 ) -> bool:
-    """
-    Kiểm tra trùng lịch thi: sinh viên đã đăng ký ca thi nào khác
-    cùng ngày + cùng ca (time_frame) với ca thi đang định đăng ký chưa.
-    """
     new_exam = db.query(
         Exam.exam_date, Exam.time_frame
     ).filter(
@@ -68,10 +64,6 @@ def check_invigilator_conflict(
         teacher_id: int,
         exam_id: int,
 ) -> bool:
-    """
-    Kiểm tra trùng lịch giám thị: giáo viên đã được phân công coi thi
-    ca nào khác cùng ngày + cùng ca (time_frame) với ca thi đang định phân công chưa.
-    """
     new_exam = db.query(
         Exam.exam_date, Exam.time_frame
     ).filter(

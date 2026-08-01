@@ -54,12 +54,7 @@ def check_schedule_conflict(
         semester: Semester,
         academic_year: str,
 ) -> bool:
-    """
-    Kiểm tra trùng lịch học: sinh viên đã có lớp nào khác
-    học cùng thứ + cùng buổi với lớp đang định đăng ký chưa.
-    """
     existing_slots = set(
-
         db.query(
             Schedule.weekday, Schedule.session
         )

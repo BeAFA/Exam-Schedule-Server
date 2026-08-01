@@ -6,9 +6,16 @@ from sqlalchemy import pool
 from alembic import context
 
 from server import Base, DATABASE_URL
-from server.models import User
+import server.models
 
 config = context.config
+
+
+# Thứ tự cập nhật database
+# alembic revision --autogenerate -m "..............."
+# xem lại file migration vừa sinh
+# alembic upgrade head
+
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)

@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 from datetime import datetime
-from sqlalchemy import create_engine, Integer, DateTime, func, Boolean
+from sqlalchemy import create_engine, Integer, DateTime, func, Boolean, MetaData
 from sqlalchemy.orm import sessionmaker, DeclarativeBase, Mapped, mapped_column
 from fastapi import FastAPI
 
@@ -29,9 +29,16 @@ engine = create_engine(
 
 SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False)
 
+naming_convention = {
+    "ix": "ix_%(column_0_label)s",
+    "uq": "uq_%(table_name)s_%(column_0_name)s",
+    "ck": "ck_%(table_name)s_%(constraint_name)s",
+    "fk": "fk_%(table_name)s_%(column_0_name)s_%(referred_table_name)s",
+    "pk": "pk_%(table_name)s",
+}
 
 class Base(DeclarativeBase):
-    pass
+    metadata = MetaData(naming_convention=naming_convention)
 
 
 class Classify:
@@ -52,4 +59,4 @@ app = FastAPI(title="Hệ thống quản lý lịch thi")
 
 def main():
     import uvicorn
-    uvicorn.run("server.main:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run("server.main:app", reload=True)

@@ -5,11 +5,9 @@ from server import app, engine, get_db, Base
 from server import crud, schemas
 
 
-Base.metadata.create_all(bind=engine)
-
 @app.get("/")
 def read_root():
-    return {"Hello World"}
+    return {"message": "Hello World"}
 
 @app.post("/register", response_model=schemas.UserOut, status_code=status.HTTP_201_CREATED)
 def register(user_data: schemas.UserCreate, db: Session = Depends(get_db)):
