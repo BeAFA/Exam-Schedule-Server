@@ -147,15 +147,17 @@ class Schedule(Base, Classify):
     room_id: Mapped[int] = mapped_column(ForeignKey(Room.id), nullable=False)
     weekday: Mapped[Weekday] = mapped_column(SQLEnum(Weekday), nullable=False)
     session: Mapped[Session] = mapped_column(SQLEnum(Session), nullable=False, comment="Buổi sáng/chiều")
+    semester: Mapped[Semester] = mapped_column(SQLEnum(Semester), nullable=False)
+    academic_year: Mapped[str] = mapped_column(String(9), nullable=False)
 
     subject_class: Mapped["SubjectClass"] = relationship(back_populates="schedules")
     room: Mapped["Room"] = relationship(back_populates="schedules")
 
-    __table_args__ = (
-        # Chặn 1 phòng bị xếp 2 lớp cùng thứ + cùng buổi
-        UniqueConstraint("room_id", "weekday", "session", name="uq_room_weekday_session"),
-    )
 
+
+    __table_args__ = (
+        UniqueConstraint("room_id", "weekday", "session", "semester", "academic_year", name="uq_room_weekday_session"),
+    )
 
 # ================= EXAM =================
 class Exam(Base, Classify):
