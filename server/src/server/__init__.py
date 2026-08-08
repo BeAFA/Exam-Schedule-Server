@@ -56,7 +56,3 @@ def get_db():
 
 
 app = FastAPI(title="Hệ thống quản lý lịch thi")
-
-def main():
-    import uvicorn
-    uvicorn.run("server.main:app", reload=True)
