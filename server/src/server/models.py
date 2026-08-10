@@ -121,7 +121,6 @@ class SubjectClass(Base, Classify):
     schedules: Mapped[list["Schedule"]] = relationship(back_populates="subject_class")
 
     __table_args__ = (
-        # Không cho trùng tên lớp trong cùng 1 môn + kỳ + năm học
         UniqueConstraint("subject_id", "subject_class_name", "semester", "academic_year", name="uq_class_identity"),
     )
 
@@ -250,3 +249,10 @@ class TeachingAssignment(Base, Classify):
     __table_args__ = (
         UniqueConstraint("teacher_id", "subject_class_id", name="uq_teacher_class"),
     )
+
+# ================= TOKEN BLACKLIST =================
+class TokenBlacklist(Base):
+    __tablename__ = "token_blacklist"
+
+    jti: Mapped[str] = mapped_column(String(255), primary_key=True, index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
