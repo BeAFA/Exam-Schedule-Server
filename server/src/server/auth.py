@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from server import get_db, config
 from server import crud
+from server.models import UserRole
 
 SECRET_KEY = config["SECRET_KEY"]
 ALGORITHM = "HS256"
@@ -39,3 +40,14 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
     if user is None:
         raise credentials_exception
     return user
+
+def require_role(*allowed_roles: UserRole):
+    def role_checker(current_user=Depends(get_current_user)):
+        if current_user.role not in allowed_roles:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Bạn không có quyền thực hiện hành động này",
+            )
+        return current_user
+
+    return role_checker

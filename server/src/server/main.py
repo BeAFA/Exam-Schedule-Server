@@ -3,11 +3,11 @@ from fastapi import Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from server import app, engine, get_db, Base
 from server import crud, schemas
-from server.auth import create_access_token, get_current_user
+from server.auth import create_access_token, get_current_user, require_role
+from server.models import UserRole
 
 
 @app.get("/")
-@app.get("/home")
 def home():
     return {"message": "Hello World"}
 
@@ -16,7 +16,7 @@ def home():
 def register(user_data: schemas.UserCreate, db: Session = Depends(get_db)):
     existing = crud.get_user_by_email(db, user_data.email)
     if existing:
-        raise HTTPException(status_code=400, detail="Email đã được sử dụng")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email đã được sử dụng")
     return crud.create_user(db, user_data)
 
 
@@ -24,7 +24,7 @@ def register(user_data: schemas.UserCreate, db: Session = Depends(get_db)):
 def login(credentials: schemas.UserLogin, db: Session = Depends(get_db)):
     user = crud.get_user_by_email(db, credentials.email)
     if not user or not user.check_password(credentials.password):
-        raise HTTPException(status_code=401, detail="Sai email hoặc mật khẩu")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Sai email hoặc mật khẩu")
 
     access_token = create_access_token(
         data={"sub": user.email, "role": user.role.value}
@@ -50,6 +50,20 @@ def read_current_user(current_user=Depends(get_current_user)):
         "role": current_user.role.value,
     }
 
+@app.get("/subject_class")
+def get_subject_class(current_user: Depends(get_current_user()), db: Session = Depends(get_db)):
+    subject_classes = crud.get_all_subject_class(db)
+    if not subject_classes:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Hiện không có lớp nào cả!")
+    return subject_classes
+
+@app.post("/subject_class/create", response_model=schemas.SubjectClassOut, status_code=status.HTTP_201_CREATED)
+def create_subject_class(
+    data: schemas.SubjectClassCreate,
+    current_user=Depends(require_role(UserRole.TEACHER, UserRole.ADMIN)),
+    db: Session = Depends(get_db),
+):
+    return crud.create_subject_class(db, data)
 
 if __name__ == "__main__":
     uvicorn.run("server.main:app", host="0.0.0.0", port=8000, reload=True)
