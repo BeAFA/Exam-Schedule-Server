@@ -1,4 +1,7 @@
-from pydantic import BaseModel, EmailStr, ConfigDict
+import re
+from datetime import datetime
+
+from pydantic import BaseModel, EmailStr, ConfigDict, field_validator
 
 from server.models import Semester, ClassStatus, Weekday, Session
 
@@ -9,9 +12,11 @@ class UserCreate(BaseModel):
     email: EmailStr
     password: str
 
+
 class UserLogin(BaseModel):
     email: EmailStr
     password: str
+
 
 class UserOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -21,10 +26,12 @@ class UserOut(BaseModel):
     last_name: str
     email: EmailStr
 
+
 class SubjectCreate(BaseModel):
     subject_code: str
     name: str
     credits: int
+
 
 class SubjectOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -41,18 +48,32 @@ class RoomOut(BaseModel):
     capacity: int
 
 
-class SubjectClassCreate(BaseModel):
+class SubjectClassBase(BaseModel):
     subject_class_name: str
-    subject_id: int
     semester: Semester
     academic_year: str
-    status: ClassStatus
     max_students: int
-    # Thông tin lịch học đi kèm khi tạo lớp — tạo cùng lúc với SubjectClass
-    # trong 1 transaction (xem crud.create_subject_class).
     room_id: int
     weekday: Weekday
     session: Session
+
+    @field_validator("academic_year")
+    @classmethod
+    def validate_academic_year(cls, v: str) -> str:
+        if not re.fullmatch(r"\d{4}-\d{4}", v):
+            raise ValueError("academic_year phải có định dạng YYYY-YYYY, VD: 2025-2026")
+        y1, y2 = int(v[:4]), int(v[5:])
+        if y2 != y1 + 1:
+            raise ValueError("Năm sau phải liền kề năm trước, VD: 2025-2026")
+        return v
+
+
+class SubjectClassCreate(SubjectClassBase):
+    subject_id: int
+
+
+class SubjectClassUpdate(SubjectClassBase):
+    status: ClassStatus
 
 
 class SubjectClassOut(BaseModel):
@@ -63,7 +84,7 @@ class SubjectClassOut(BaseModel):
     semester: Semester
     academic_year: str
     status: ClassStatus
-    max_students: int | None
+    max_students: int
 
 
 class ScheduleOut(BaseModel):
@@ -78,8 +99,33 @@ class ScheduleOut(BaseModel):
 
 
 class SubjectClassWithScheduleOut(BaseModel):
-    """Trả về đầy đủ lớp học phần + lịch học vừa tạo, dùng cho response
-    của endpoint tạo mới (SubjectClassOut không nhìn thấy Schedule vì
-    SubjectClass model chỉ có `schedules` dạng list, không có 1-1)."""
     subject_class: SubjectClassOut
     schedule: ScheduleOut
+
+
+class TeachingAssignmentCreate(BaseModel):
+    teacher_id: int
+    subject_class_id: int
+
+
+class TeachingAssignmentOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    teacher_id: int
+    subject_class_id: int
+
+
+class EnrollmentCreate(BaseModel):
+    subject_class_id: int
+    semester: Semester
+    academic_year: str
+
+
+class EnrollmentOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    student_id: int
+    subject_class_id: int
+    semester: Semester
+    academic_year: str
+    registered_at: datetime

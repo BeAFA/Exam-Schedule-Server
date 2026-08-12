@@ -2,15 +2,17 @@ from datetime import datetime, timezone
 
 import uvicorn
 from fastapi import Depends, HTTPException, status
-from jose import jwt
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from server import app, engine, get_db, Base
+from server import app, get_db
 from server import crud, schemas
-from server.auth import create_access_token, get_current_user, require_role, oauth2_scheme, SECRET_KEY, ALGORITHM, \
+from server.auth import create_access_token, get_current_user, require_role, \
     get_token_payload
-from server.models import UserRole
+from server.exceptions import register_exception_handlers
+from server.models import UserRole, SubjectClass
+
+register_exception_handlers(app)
 
 
 @app.get("/")
@@ -45,11 +47,12 @@ def login(credentials: schemas.UserLogin, db: Session = Depends(get_db)):
         "full_name": f"{user.first_name} {user.last_name}",
     }
 
+
 @app.post("/logout")
 def logout(
-    payload: dict = Depends(get_token_payload),
-    current_user=Depends(get_current_user),
-    db: Session = Depends(get_db),
+        payload: dict = Depends(get_token_payload),
+        current_user=Depends(get_current_user),
+        db: Session = Depends(get_db),
 ):
     jti = payload.get("jti")
     exp = payload.get("exp")
@@ -69,12 +72,14 @@ def read_current_user(current_user=Depends(get_current_user)):
         "role": current_user.role.value,
     }
 
+
 @app.get("/subject")
 def get_subject(current_user=Depends(require_role(UserRole.TEACHER, UserRole.ADMIN)), db: Session = Depends(get_db)):
     subject = crud.get_all_subject(db)
     if not subject:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Hiện không có môn học nào cả!")
     return subject
+
 
 @app.get("/room")
 def get_room(current_user=Depends(require_role(UserRole.TEACHER, UserRole.ADMIN)), db: Session = Depends(get_db)):
@@ -83,6 +88,7 @@ def get_room(current_user=Depends(require_role(UserRole.TEACHER, UserRole.ADMIN)
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Hiện không có phòng nào cả!")
     return rooms
 
+
 @app.get("/subject_class")
 def get_subject_class(current_user=Depends(get_current_user), db: Session = Depends(get_db)):
     subject_classes = crud.get_all_subject_class(db)
@@ -90,25 +96,82 @@ def get_subject_class(current_user=Depends(get_current_user), db: Session = Depe
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Hiện không có lớp nào cả!")
     return subject_classes
 
-@app.post("/subject_class/create", response_model=schemas.SubjectClassWithScheduleOut, status_code=status.HTTP_201_CREATED)
+
+@app.post("/subject_class/create", response_model=schemas.SubjectClassWithScheduleOut,
+          status_code=status.HTTP_201_CREATED)
 def create_subject_class(
-    data: schemas.SubjectClassCreate,
-    current_user=Depends(require_role(UserRole.TEACHER, UserRole.ADMIN)),
-    db: Session = Depends(get_db),
+        data: schemas.SubjectClassCreate,
+        current_user=Depends(require_role(UserRole.ADMIN)),
+        db: Session = Depends(get_db),
 ):
-    try:
-        subject_class, schedule = crud.create_subject_class(db, data)
-        return schemas.SubjectClassWithScheduleOut(
-            subject_class=schemas.SubjectClassOut.model_validate(subject_class),
-            schedule=schemas.ScheduleOut.model_validate(schedule),
-        )
-    except IntegrityError:
-        db.rollback()
+    subject_class, schedule = crud.create_subject_class(db, data)
+    return schemas.SubjectClassWithScheduleOut(
+        subject_class=schemas.SubjectClassOut.model_validate(subject_class),
+        schedule=schemas.ScheduleOut.model_validate(schedule),
+    )
+
+
+@app.post("/subject_class/{subject_class_id}/update", response_model=schemas.SubjectClassWithScheduleOut,
+          status_code=status.HTTP_200_OK)
+async def update_subject_class(
+        subject_class_id: int,
+        data: schemas.SubjectClassUpdate,
+        current_user=Depends(require_role(UserRole.ADMIN)),
+        db: Session = Depends(get_db),
+):
+    subject_class, schedule = crud.update_subject_class(db, data, subject_class_id)
+    return schemas.SubjectClassWithScheduleOut(
+        subject_class=schemas.SubjectClassOut.model_validate(subject_class),
+        schedule=schemas.ScheduleOut.model_validate(schedule),
+    )
+
+
+@app.get("/teacher", response_model=list[schemas.UserOut], status_code=status.HTTP_200_OK)
+def get_teacher(
+        current_user= Depends(require_role(UserRole.TEACHER, UserRole.ADMIN)),
+        db: Session = Depends(get_db)
+):
+    teachers = crud.get_teacher(db)
+    if not teachers:
         raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Phòng đã được xếp lịch trùng thứ/buổi trong học kỳ + năm học này, "
-                   "hoặc lớp học phần đã tồn tại (trùng môn/tên lớp/kỳ/năm).",
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Hiện không có giảng viên nào cả."
         )
+    return  teachers
+
+
+
+@app.post("/teaching_assignment/create", response_model=schemas.TeachingAssignmentOut,
+          status_code=status.HTTP_201_CREATED)
+def create_teaching_assignment(
+        data: schemas.TeachingAssignmentCreate,
+        current_user=Depends(require_role(UserRole.ADMIN)),
+        db: Session = Depends(get_db)
+):
+    teaching_assignment = crud.create_teacher_assignment(db, data)
+    return schemas.TeachingAssignmentOut.model_validate(teaching_assignment)
+
+
+@app.post("/teaching_assignment/{teaching_assignment_id}/update", response_model=schemas.TeachingAssignmentOut,
+          status_code=status.HTTP_200_OK)
+def update_teaching_assignment(
+        teaching_assignment_id: int,
+        data: schemas.TeachingAssignmentCreate,
+        current_user=Depends(require_role(UserRole.ADMIN)),
+        db: Session = Depends(get_db)
+):
+    teaching_assignment = crud.update_teacher_assignment(db, data, teaching_assignment_id)
+    return schemas.TeachingAssignmentOut.model_validate(teaching_assignment)
+
+
+@app.post("/enroll", response_model=schemas.EnrollmentOut, status_code=status.HTTP_201_CREATED)
+def enroll(
+        data: schemas.EnrollmentCreate,
+        current_user=Depends(require_role(UserRole.STUDENT)),
+        db: Session = Depends(get_db),
+):
+    return crud.create_enrollment(db, current_user.id, data)
+
 
 if __name__ == "__main__":
     uvicorn.run("server.main:app", host="0.0.0.0", port=8000, reload=True)

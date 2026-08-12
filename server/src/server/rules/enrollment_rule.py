@@ -1,4 +1,4 @@
-from sqlalchemy import func
+from sqlalchemy import func, select, exists
 from sqlalchemy.orm import Session
 
 from server.models import Enrollment, Subject, SubjectClass, Schedule, ClassStatus, Semester
@@ -11,12 +11,9 @@ def check_duplicate_enrollment(
         student_id,
         subject_class_id,
 ):
-    return db.query(
-        Enrollment.id
-    ).filter(
-        Enrollment.student_id == student_id,
-        Enrollment.subject_class_id == subject_class_id,
-    ).first() is not None
+    stmt = select(exists().where(Enrollment.student_id == student_id,
+                                 Enrollment.subject_class_id == subject_class_id))
+    return db.scalar(stmt)
 
 
 def check_credit_limit(
@@ -24,27 +21,13 @@ def check_credit_limit(
         student_id,
         subject_class,
 ):
-    current = (
-        db.query(
-            func.coalesce(func.sum(Subject.credits), 0)
-        )
-        .join(
-            SubjectClass,
-            Subject.id == SubjectClass.subject_id
-        )
-        .join(
-            Enrollment,
-            Enrollment.subject_class_id == SubjectClass.id
-        )
-        .filter(
-            Enrollment.student_id == student_id,
+    stmt = select(func.coalesce(func.sum(Subject.credits), 0)).join(SubjectClass,
+            Subject.id == SubjectClass.subject_id).join(Enrollment,
+            Enrollment.subject_class_id == SubjectClass.id).where(Enrollment.student_id == student_id,
             SubjectClass.semester == subject_class.semester,
-            SubjectClass.academic_year == subject_class.academic_year,
-        )
-        .scalar()
-    )
+            SubjectClass.academic_year == subject_class.academic_year)
 
-    return current + subject_class.subject.credits <= MAXIMUM_CREDITS
+    return db.scalar(stmt) + subject_class.subject.credits <= MAXIMUM_CREDITS
 
 
 def check_schedule_conflict(

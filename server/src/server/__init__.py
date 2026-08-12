@@ -24,6 +24,9 @@ engine = create_engine(
     pool_timeout=30,
     pool_recycle=1800,
     pool_pre_ping=True,
+    connect_args={
+        "init_command": "SET SESSION innodb_lock_wait_timeout = 5"
+    },
     echo=config.get("DEBUG", False),
 )
 
@@ -36,6 +39,7 @@ naming_convention = {
     "fk": "fk_%(table_name)s_%(column_0_name)s_%(referred_table_name)s",
     "pk": "pk_%(table_name)s",
 }
+
 
 class Base(DeclarativeBase):
     metadata = MetaData(naming_convention=naming_convention)
@@ -51,6 +55,9 @@ def get_db():
     db = SessionLocal()
     try:
         yield db
+    except Exception:
+        db.rollback()
+        raise
     finally:
         db.close()
 

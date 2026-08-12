@@ -112,7 +112,7 @@ class SubjectClass(Base, Classify):
     semester: Mapped[Semester] = mapped_column(SQLEnum(Semester), nullable=False, default=Semester.Semester_1)
     academic_year: Mapped[str] = mapped_column(String(9), nullable=False, comment="VD: 2025-2026")
     status: Mapped[ClassStatus] = mapped_column(SQLEnum(ClassStatus), nullable=False, default=ClassStatus.OPEN)
-    max_students: Mapped[int] = mapped_column(Integer, nullable=True)
+    max_students: Mapped[int] = mapped_column(Integer, nullable=False)
 
     subject: Mapped["Subject"] = relationship(back_populates="classes")
     enrollments: Mapped[list["Enrollment"]] = relationship(back_populates="subject_class")
@@ -227,12 +227,13 @@ class Enrollment(Base, Classify):
     registered_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
     final_score: Mapped[float] = mapped_column(Float, nullable=True,
                                                comment="Điểm tổng kết môn (sau khi có điểm giữa kỳ + cuối kỳ)")
+    academic_year: Mapped[str] = mapped_column(String(9), nullable=False)
 
     student: Mapped["User"] = relationship(back_populates="enrollments")
     subject_class: Mapped["SubjectClass"] = relationship(back_populates="enrollments")
 
     __table_args__ = (
-        UniqueConstraint("student_id", "subject_class_id", "semester", name="uq_student_class_semester"),
+        UniqueConstraint("student_id", "subject_class_id", "semester", "academic_year", name="uq_student_class_semester_year"),
     )
 
 
