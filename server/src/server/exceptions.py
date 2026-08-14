@@ -4,12 +4,13 @@ from sqlalchemy.exc import IntegrityError, OperationalError
 
 CONSTRAINT_MESSAGES: dict[str, str] = {
     "uq_class_identity": "Lớp học phần này đã tồn tại (trùng môn học/tên lớp/học kỳ/năm học).",
-    "uq_room_weekday_session": "Phòng đã được xếp lịch trùng thứ/buổi trong học kỳ và năm học này.",
     "uq_room_datetime": "Phòng đã có lịch thi trùng ngày/giờ này.",
+    "uq_class_session_number": "Lớp học phần này đã bị đụng lịch học",
+    "uq_subject_class_weekday_session":"Lớp học phần này đã trùng lịch học trong tuần",
     "uq_exam_teacher": "Giảng viên đã được phân công coi ca thi này rồi.",
     "uq_exam_student": "Sinh viên đã đăng ký ca thi này rồi.",
     "uq_exam_seat": "Số ghế này đã có người ngồi trong ca thi.",
-    "uq_student_class_semester_year": "Bạn đã đăng ký lớp học phần này trong học kỳ/năm học này rồi.",
+    "uq_student_subject_class": "Bạn đã đăng ký lớp học phần này trong học kỳ/năm học này rồi.",
     "uq_teacher_class": "Giảng viên đã được phân công dạy lớp này rồi.",
     "uq_users_email": "Email này đã được sử dụng.",
     "uq_users_user_code": "Mã người dùng này đã tồn tại.",

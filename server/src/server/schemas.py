@@ -3,7 +3,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, EmailStr, ConfigDict, field_validator
 
-from server.models import Semester, ClassStatus, Weekday, Session
+from server.models import Semester, ClassStatus, Weekday, Session, TypeOfExam, TimeFrame, ExamStatus
 
 
 class UserCreate(BaseModel):
@@ -81,6 +81,7 @@ class SubjectClassOut(BaseModel):
     id: int
     subject_class_name: str
     subject_id: int
+    subject: SubjectOut
     semester: Semester
     academic_year: str
     status: ClassStatus
@@ -92,6 +93,7 @@ class ScheduleOut(BaseModel):
     id: int
     subject_class_id: int
     room_id: int
+    room: RoomOut
     weekday: Weekday
     session: Session
     semester: Semester
@@ -108,10 +110,22 @@ class TeachingAssignmentCreate(BaseModel):
     subject_class_id: int
 
 
-class TeachingAssignmentOut(BaseModel):
+class TeachingAssignmentOut(TeachingAssignmentCreate):
     model_config = ConfigDict(from_attributes=True)
     id: int
-    teacher_id: int
+
+
+class ExamBase(BaseModel):
+    subject_class_id: int
+    room_id: int
+    exam_date: datetime
+    type: TypeOfExam
+    time_frame: TimeFrame
+    semester: Semester
+    duration: int
+    status: ExamStatus
+
+class ExamCreate(ExamBase):
     subject_class_id: int
 
 

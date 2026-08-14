@@ -2,7 +2,6 @@ from datetime import datetime, timezone
 
 import uvicorn
 from fastapi import Depends, HTTPException, status
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from server import app, get_db
@@ -10,7 +9,7 @@ from server import crud, schemas
 from server.auth import create_access_token, get_current_user, require_role, \
     get_token_payload
 from server.exceptions import register_exception_handlers
-from server.models import UserRole, SubjectClass
+from server.models import UserRole
 
 register_exception_handlers(app)
 
@@ -88,9 +87,20 @@ def get_room(current_user=Depends(require_role(UserRole.TEACHER, UserRole.ADMIN)
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Hiện không có phòng nào cả!")
     return rooms
 
+@app.get("/schedule", response_model=list[schemas.ScheduleOut], status_code=status.HTTP_200_OK)
+def get_schedule(current_user=Depends(require_role(UserRole.STUDENT, UserRole.TEACHER, UserRole.ADMIN)), db: Session = Depends(get_db)):
+    schedules = crud.get_all_schedule(db)
+    if not schedules:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Không tìm thấy lịch học của các lớp học phần."
+        )
+    return schedules
 
-@app.get("/subject_class")
-def get_subject_class(current_user=Depends(get_current_user), db: Session = Depends(get_db)):
+
+@app.get("/subject_class", response_model=list[schemas.SubjectClassOut], status_code=status.HTTP_200_OK)
+def get_subject_class(current_user=Depends(require_role(UserRole.STUDENT, UserRole.TEACHER, UserRole.ADMIN)),
+                      db: Session = Depends(get_db)):
     subject_classes = crud.get_all_subject_class(db)
     if not subject_classes:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Hiện không có lớp nào cả!")
@@ -128,7 +138,7 @@ async def update_subject_class(
 
 @app.get("/teacher", response_model=list[schemas.UserOut], status_code=status.HTTP_200_OK)
 def get_teacher(
-        current_user= Depends(require_role(UserRole.TEACHER, UserRole.ADMIN)),
+        current_user=Depends(require_role(UserRole.TEACHER, UserRole.ADMIN)),
         db: Session = Depends(get_db)
 ):
     teachers = crud.get_teacher(db)
@@ -137,8 +147,19 @@ def get_teacher(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Hiện không có giảng viên nào cả."
         )
-    return  teachers
+    return teachers
 
+
+@app.get("/subject_class/{subject_class_id}/teaching_assignment",
+         response_model=schemas.TeachingAssignmentOut | None,
+         status_code=status.HTTP_200_OK)
+def get_subject_class_teaching_assignment(
+        subject_class_id: int,
+        current_user=Depends(require_role(UserRole.TEACHER, UserRole.ADMIN)),
+        db: Session = Depends(get_db),
+):
+    assignment = crud.get_teaching_assignment_by_subject_class(db, subject_class_id)
+    return schemas.TeachingAssignmentOut.model_validate(assignment) if assignment else None
 
 
 @app.post("/teaching_assignment/create", response_model=schemas.TeachingAssignmentOut,
@@ -164,13 +185,26 @@ def update_teaching_assignment(
     return schemas.TeachingAssignmentOut.model_validate(teaching_assignment)
 
 
-@app.post("/enroll", response_model=schemas.EnrollmentOut, status_code=status.HTTP_201_CREATED)
-def enroll(
-        data: schemas.EnrollmentCreate,
-        current_user=Depends(require_role(UserRole.STUDENT)),
-        db: Session = Depends(get_db),
-):
-    return crud.create_enrollment(db, current_user.id, data)
+# @app.get("/exam", response_model=schemas.ExamOut, status_code=status.HTTP_200_OK)
+# def get_exam(
+#         current_user=Depends(require_role(UserRole.ADMIN)),
+#         db: Session = Depends(get_db),
+# ):
+#     exams = crud.get_all_exam(db)
+#     if not exams:
+#         raise HTTPException(
+#             status_code=status.HTTP_404_NOT_FOUND,
+#             detail="Hiện tại chưa có lịch thi của lớp học phần nào cả."
+#         )
+#     return exams
+
+# @app.post("/enroll", response_model=schemas.EnrollmentOut, status_code=status.HTTP_201_CREATED)
+# def enroll(
+#         data: schemas.EnrollmentCreate,
+#         current_user=Depends(require_role(UserRole.STUDENT)),
+#         db: Session = Depends(get_db),
+# ):
+#     return crud.create_enrollment(db, current_user.id, data)
 
 
 if __name__ == "__main__":

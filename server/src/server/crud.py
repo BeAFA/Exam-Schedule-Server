@@ -2,10 +2,10 @@ from datetime import datetime, timezone
 
 from fastapi import HTTPException, status
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import select, func
 from server.models import User, UserRole, SubjectClass, TokenBlacklist, Subject, Room, Schedule, Enrollment, \
-    ClassStatus, TeachingAssignment
+    ClassStatus, TeachingAssignment, Exam
 from server.rules import teaching_rule, common_rule
 from server.rules.enrollment_rule import check_subject_class_status, check_subject_class_capacity, \
     check_schedule_conflict, check_credit_limit, MAXIMUM_CREDITS
@@ -91,8 +91,13 @@ def get_all_room(db: Session) -> list[Room]:
     return db.scalars(select(Room)).all()
 
 
+def get_all_schedule(db:Session) -> list[Schedule]:
+    return db.scalars(select(Schedule)).all()
+
+
+
 def get_all_subject_class(db: Session) -> list[SubjectClass]:
-    return db.scalars(select(SubjectClass)).all()
+    return db.scalars(select(SubjectClass).options(joinedload(SubjectClass.subject))).all()
 
 
 def get_subject_class_by_subject(db: Session, subject_class_id: int) -> SubjectClass | None:
@@ -163,12 +168,21 @@ def create_subject_class(db: Session, subject_class_data: SubjectClassCreate) ->
     db.commit()
     db.refresh(subject_class)
     db.refresh(schedule)
+
+    subject_class = db.scalar(
+        select(SubjectClass).where(SubjectClass.id == subject_class.id).options(joinedload(SubjectClass.subject))
+    )
+    schedule = db.scalar(
+        select(Schedule).where(Schedule.id == schedule.id).options(joinedload(Schedule.room))
+    )
+
     return subject_class, schedule
 
 
 def update_subject_class(db: Session, subject_class_data: SubjectClassUpdate, subject_class_id: int) -> tuple[
     SubjectClass, Schedule]:
-    subject_class = db.get(SubjectClass, subject_class_id)
+    subject_class = db.scalar(
+        select(SubjectClass).where(SubjectClass.id == subject_class_id).options(joinedload(SubjectClass.subject)))
     if subject_class is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lớp học phần không tồn tại")
 
@@ -185,7 +199,8 @@ def update_subject_class(db: Session, subject_class_data: SubjectClassUpdate, su
             detail=f"Sĩ số tối đa ({subject_class_data.max_students}) vượt quá sức chứa phòng ({room.capacity})",
         )
 
-    schedule = db.query(Schedule).filter(Schedule.subject_class_id == subject_class_id).first()
+    schedule = db.scalar(
+        select(Schedule).where(Schedule.subject_class_id == subject_class_id).options(joinedload(Schedule.room)))
     if schedule is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Không tìm thấy lịch học của lớp này")
 
@@ -209,7 +224,6 @@ def update_subject_class(db: Session, subject_class_data: SubjectClassUpdate, su
     subject_class.max_students = subject_class_data.max_students
     subject_class.status = subject_class_data.status
 
-
     schedule.room_id = subject_class_data.room_id
     schedule.weekday = subject_class_data.weekday
     schedule.session = subject_class_data.session
@@ -221,8 +235,21 @@ def update_subject_class(db: Session, subject_class_data: SubjectClassUpdate, su
     db.refresh(schedule)
     return subject_class, schedule
 
+
 def get_teacher(db: Session) -> list[User]:
-    return db.scalars(select(User).where(User.role==UserRole.TEACHER)).all()
+    return db.scalars(select(User).where(User.role == UserRole.TEACHER)).all()
+
+
+def get_teaching_assignment_by_subject_class(db: Session, subject_class_id: int):
+    subject_class = db.get(SubjectClass, subject_class_id)
+    if subject_class is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Lớp học phần không tồn tại."
+        )
+    return db.scalar(
+        select(TeachingAssignment).where(TeachingAssignment.subject_class_id == subject_class_id)
+    )
 
 
 def create_teacher_assignment(db: Session, teaching_assignment_data: TeachingAssignmentCreate) -> TeachingAssignment:
@@ -300,55 +327,58 @@ def update_teacher_assignment(db: Session, teaching_assignment_data: TeachingAss
     db.refresh(teaching_assignment)
     return teaching_assignment
 
+def get_all_exam(db: Session) -> list[Exam]:
+    return db.scalars(select(Exam)).all()
 
-def create_enrollment(db: Session, student_id: int, data: EnrollmentCreate) -> Enrollment:
-    # with_for_update() khóa dòng subject_class -> tránh 2 sinh viên cùng đăng ký
-    # vượt sĩ số trong lúc race condition (chỉ nhả lock khi commit/rollback).
-    subject_class = db.execute(
-        select(SubjectClass)
-        .where(SubjectClass.id == data.subject_class_id)
-        .with_for_update()
-    ).scalar_one_or_none()
-
-    if subject_class is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Lớp học phần không tồn tại.",
-        )
-
-    if not check_subject_class_status(subject_class):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Lớp học phần không mở đăng ký (đã đóng hoặc đã kết thúc).",
-        )
-
-    if not check_subject_class_capacity(db, subject_class):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Lớp học phần đã đủ sĩ số, không thể đăng ký thêm.",
-        )
-
-    if check_schedule_conflict(
-            db, student_id, data.subject_class_id, data.semester, data.academic_year
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Lịch học của lớp này bị trùng với một lớp bạn đã đăng ký trong học kỳ này.",
-        )
-
-    if not check_credit_limit(db, student_id, subject_class):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Đăng ký lớp này sẽ vượt quá giới hạn {MAXIMUM_CREDITS} tín chỉ trong học kỳ.",
-        )
-
-    enrollment = Enrollment(
-        student_id=student_id,
-        subject_class_id=data.subject_class_id,
-        semester=data.semester,
-        academic_year=data.academic_year,
-    )
-    db.add(enrollment)
-    db.commit()
-    db.refresh(enrollment)
-    return enrollment
+#
+# def create_enrollment(db: Session, student_id: int, data: EnrollmentCreate) -> Enrollment:
+#     # with_for_update() khóa dòng subject_class -> tránh 2 sinh viên cùng đăng ký
+#     # vượt sĩ số trong lúc race condition (chỉ nhả lock khi commit/rollback).
+#     subject_class = db.execute(
+#         select(SubjectClass)
+#         .where(SubjectClass.id == data.subject_class_id)
+#         .with_for_update()
+#     ).scalar_one_or_none()
+#
+#     if subject_class is None:
+#         raise HTTPException(
+#             status_code=status.HTTP_404_NOT_FOUND,
+#             detail="Lớp học phần không tồn tại.",
+#         )
+#
+#     if not check_subject_class_status(subject_class):
+#         raise HTTPException(
+#             status_code=status.HTTP_400_BAD_REQUEST,
+#             detail="Lớp học phần không mở đăng ký (đã đóng hoặc đã kết thúc).",
+#         )
+#
+#     if not check_subject_class_capacity(db, subject_class):
+#         raise HTTPException(
+#             status_code=status.HTTP_400_BAD_REQUEST,
+#             detail="Lớp học phần đã đủ sĩ số, không thể đăng ký thêm.",
+#         )
+#
+#     if check_schedule_conflict(
+#             db, student_id, data.subject_class_id, data.semester, data.academic_year
+#     ):
+#         raise HTTPException(
+#             status_code=status.HTTP_400_BAD_REQUEST,
+#             detail="Lịch học của lớp này bị trùng với một lớp bạn đã đăng ký trong học kỳ này.",
+#         )
+#
+#     if not check_credit_limit(db, student_id, subject_class):
+#         raise HTTPException(
+#             status_code=status.HTTP_400_BAD_REQUEST,
+#             detail=f"Đăng ký lớp này sẽ vượt quá giới hạn {MAXIMUM_CREDITS} tín chỉ trong học kỳ.",
+#         )
+#
+#     enrollment = Enrollment(
+#         student_id=student_id,
+#         subject_class_id=data.subject_class_id,
+#         semester=data.semester,
+#         academic_year=data.academic_year,
+#     )
+#     db.add(enrollment)
+#     db.commit()
+#     db.refresh(enrollment)
+#     return enrollment

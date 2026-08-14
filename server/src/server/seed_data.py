@@ -190,6 +190,7 @@ def seed():
                 subject_class_id=classes[c_idx].id,
                 semester=sem,
                 registered_at=datetime(2025, 8, 20, 9, 0, 0),
+                academic_year=ACADEMIC_YEAR,
             )
             for s_idx, c_idx, sem in enrollment_data
         ]
