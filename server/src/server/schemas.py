@@ -1,16 +1,21 @@
 import re
-from datetime import datetime
+from datetime import datetime, date
+from typing import Optional
 
 from pydantic import BaseModel, EmailStr, ConfigDict, field_validator
 
-from server.models import Semester, ClassStatus, Weekday, Session, TypeOfExam, TimeFrame, ExamStatus
+from server.models import (
+    Semester, ClassStatus, Weekday, SessionEN,
+    TypeOfExam, TimeFrame, ExamStatus, UserRole, AttendanceStatus
+)
 
-
+# ================= USER =================
 class UserCreate(BaseModel):
     first_name: str
     last_name: str
     email: EmailStr
     password: str
+    role: Optional[UserRole] = UserRole.STUDENT
 
 
 class UserLogin(BaseModel):
@@ -25,8 +30,10 @@ class UserOut(BaseModel):
     first_name: str
     last_name: str
     email: EmailStr
+    role: UserRole
 
 
+# ================= SUBJECT =================
 class SubjectCreate(BaseModel):
     subject_code: str
     name: str
@@ -41,6 +48,7 @@ class SubjectOut(BaseModel):
     credits: int
 
 
+# ================= ROOM =================
 class RoomOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: int
@@ -48,14 +56,32 @@ class RoomOut(BaseModel):
     capacity: int
 
 
+# ================= SCHEDULE =================
+class ScheduleItem(BaseModel):
+    weekday: Weekday
+    session: SessionEN
+    room_id: int
+
+
+class ScheduleOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    subject_class_id: int
+    room_id: int
+    room: RoomOut
+    weekday: Weekday
+    session: SessionEN
+
+
+# ================= SUBJECT CLASS =================
 class SubjectClassBase(BaseModel):
     subject_class_name: str
     semester: Semester
     academic_year: str
     max_students: int
-    room_id: int
-    weekday: Weekday
-    session: Session
+    start_date: date
+    number_of_sessions: int
+    schedules: list[ScheduleItem]
 
     @field_validator("academic_year")
     @classmethod
@@ -65,6 +91,19 @@ class SubjectClassBase(BaseModel):
         y1, y2 = int(v[:4]), int(v[5:])
         if y2 != y1 + 1:
             raise ValueError("Năm sau phải liền kề năm trước, VD: 2025-2026")
+        return v
+
+    @field_validator("schedules")
+    @classmethod
+    def validate_schedules(cls, v: list["ScheduleItem"]) -> list["ScheduleItem"]:
+        if not v:
+            raise ValueError("Phải có ít nhất một lịch học (thứ/buổi/phòng).")
+        seen = set()
+        for item in v:
+            key = (item.weekday, item.session)
+            if key in seen:
+                raise ValueError(f"Lịch học bị trùng: {item.weekday.value} - {item.session.value}")
+            seen.add(key)
         return v
 
 
@@ -84,27 +123,31 @@ class SubjectClassOut(BaseModel):
     subject: SubjectOut
     semester: Semester
     academic_year: str
+    start_date: date
+    number_of_sessions: int
     status: ClassStatus
     max_students: int
 
 
-class ScheduleOut(BaseModel):
+class SubjectClassWithScheduleOut(BaseModel):
+    subject_class: SubjectClassOut
+    schedules: list[ScheduleOut]
+
+
+# ================= CLASS SESSION =================
+class ClassSessionOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: int
     subject_class_id: int
+    schedule_id: int
+    session_number: int
+    session_date: date
     room_id: int
-    room: RoomOut
     weekday: Weekday
-    session: Session
-    semester: Semester
-    academic_year: str
+    session: SessionEN
 
 
-class SubjectClassWithScheduleOut(BaseModel):
-    subject_class: SubjectClassOut
-    schedule: ScheduleOut
-
-
+# ================= TEACHING ASSIGNMENT =================
 class TeachingAssignmentCreate(BaseModel):
     teacher_id: int
     subject_class_id: int
@@ -115,24 +158,61 @@ class TeachingAssignmentOut(TeachingAssignmentCreate):
     id: int
 
 
-class ExamBase(BaseModel):
+# ================= EXAM =================
+class ExamCreate(BaseModel):
     subject_class_id: int
     room_id: int
-    exam_date: datetime
+    exam_date: date
     type: TypeOfExam
     time_frame: TimeFrame
-    semester: Semester
+    duration: int
+
+
+class ExamOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    subject_class_id: int
+    room_id: int
+    exam_date: date
+    type: TypeOfExam
+    time_frame: TimeFrame
     duration: int
     status: ExamStatus
 
-class ExamCreate(ExamBase):
-    subject_class_id: int
+
+# ================= EXAM INVIGILATOR =================
+class ExamInvigilatorCreate(BaseModel):
+    exam_id: int
+    teacher_id: int
 
 
+class ExamInvigilatorOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    exam_id: int
+    teacher_id: int
+
+
+# ================= EXAM REGISTRATION =================
+class ExamRegistrationCreate(BaseModel):
+    exam_id: int
+    student_id: int
+    seat_number: str
+
+
+class ExamRegistrationOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    exam_id: int
+    student_id: int
+    seat_number: str
+    attendance_status: AttendanceStatus
+    score: Optional[float] = None
+
+
+# ================= ENROLLMENT =================
 class EnrollmentCreate(BaseModel):
     subject_class_id: int
-    semester: Semester
-    academic_year: str
 
 
 class EnrollmentOut(BaseModel):
@@ -140,6 +220,5 @@ class EnrollmentOut(BaseModel):
     id: int
     student_id: int
     subject_class_id: int
-    semester: Semester
-    academic_year: str
     registered_at: datetime
+    final_score: Optional[float] = None

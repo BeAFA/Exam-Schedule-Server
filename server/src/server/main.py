@@ -61,15 +61,9 @@ def logout(
     return {"message": "Đăng xuất thành công"}
 
 
-@app.get("/me")
+@app.get("/me", response_model=schemas.UserOut)
 def read_current_user(current_user=Depends(get_current_user)):
-    return {
-        "id": current_user.id,
-        "user_code": current_user.user_code,
-        "email": current_user.email,
-        "full_name": f"{current_user.first_name} {current_user.last_name}",
-        "role": current_user.role.value,
-    }
+    return current_user
 
 
 @app.get("/subject")
@@ -114,10 +108,10 @@ def create_subject_class(
         current_user=Depends(require_role(UserRole.ADMIN)),
         db: Session = Depends(get_db),
 ):
-    subject_class, schedule = crud.create_subject_class(db, data)
+    subject_class, schedules = crud.create_subject_class(db, data)
     return schemas.SubjectClassWithScheduleOut(
         subject_class=schemas.SubjectClassOut.model_validate(subject_class),
-        schedule=schemas.ScheduleOut.model_validate(schedule),
+        schedules=[schemas.ScheduleOut.model_validate(s) for s in schedules],
     )
 
 
@@ -129,10 +123,10 @@ async def update_subject_class(
         current_user=Depends(require_role(UserRole.ADMIN)),
         db: Session = Depends(get_db),
 ):
-    subject_class, schedule = crud.update_subject_class(db, data, subject_class_id)
+    subject_class, schedules = crud.update_subject_class(db, data, subject_class_id)
     return schemas.SubjectClassWithScheduleOut(
         subject_class=schemas.SubjectClassOut.model_validate(subject_class),
-        schedule=schemas.ScheduleOut.model_validate(schedule),
+        schedules=[schemas.ScheduleOut.model_validate(s) for s in schedules],
     )
 
 
@@ -185,26 +179,36 @@ def update_teaching_assignment(
     return schemas.TeachingAssignmentOut.model_validate(teaching_assignment)
 
 
-# @app.get("/exam", response_model=schemas.ExamOut, status_code=status.HTTP_200_OK)
-# def get_exam(
-#         current_user=Depends(require_role(UserRole.ADMIN)),
-#         db: Session = Depends(get_db),
-# ):
-#     exams = crud.get_all_exam(db)
-#     if not exams:
-#         raise HTTPException(
-#             status_code=status.HTTP_404_NOT_FOUND,
-#             detail="Hiện tại chưa có lịch thi của lớp học phần nào cả."
-#         )
-#     return exams
+@app.get("/exam", response_model=list[schemas.ExamOut], status_code=status.HTTP_200_OK)
+def get_exam(
+        current_user=Depends(require_role(UserRole.TEACHER, UserRole.ADMIN)),
+        db: Session = Depends(get_db),
+):
+    exams = crud.get_all_exam(db)
+    if not exams:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Hiện tại chưa có lịch thi của lớp học phần nào cả."
+        )
+    return exams
 
-# @app.post("/enroll", response_model=schemas.EnrollmentOut, status_code=status.HTTP_201_CREATED)
-# def enroll(
-#         data: schemas.EnrollmentCreate,
-#         current_user=Depends(require_role(UserRole.STUDENT)),
-#         db: Session = Depends(get_db),
-# ):
-#     return crud.create_enrollment(db, current_user.id, data)
+
+@app.post("/exam/create", response_model=schemas.ExamOut, status_code=status.HTTP_201_CREATED)
+def create_exam(
+        data: schemas.ExamCreate,
+        current_user=Depends(require_role(UserRole.ADMIN)),
+        db: Session = Depends(get_db),
+):
+    return crud.create_exam(db, data)
+
+
+@app.post("/enroll/create", response_model=schemas.EnrollmentOut, status_code=status.HTTP_201_CREATED)
+def create_enroll(
+        data: schemas.EnrollmentCreate,
+        current_user=Depends(require_role(UserRole.STUDENT)),
+        db: Session = Depends(get_db),
+):
+    return crud.create_enrollment(db, current_user.id, data)
 
 
 if __name__ == "__main__":

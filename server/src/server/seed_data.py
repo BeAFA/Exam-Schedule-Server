@@ -11,7 +11,7 @@ LƯU Ý TRƯỚC KHI CHẠY:
   -> ExamInvigilator/ExamRegistration.
 """
 
-from datetime import datetime
+from datetime import datetime, date
 
 from server import Base, engine, SessionLocal
 from server.models import (
@@ -19,7 +19,8 @@ from server.models import (
     Subject,
     SubjectClass, Semester, ClassStatus,
     Room,
-    Schedule, Weekday, Session as SessionEnum,
+    Schedule, Weekday, SessionEN as SessionEnum,
+    ClassSession, generate_class_sessions,
     Exam, TypeOfExam, TimeFrame, ExamStatus,
     ExamInvigilator,
     ExamRegistration, AttendanceStatus,
@@ -104,54 +105,62 @@ def seed():
 
         # ================= SUBJECT CLASS =================
         classes_data = [
-            # (subject_code, class_name, semester, status, max_students)
-            ("IT001", "Lop 01", Semester.Semester_1, ClassStatus.OPEN, 40),
-            ("IT001", "Lop 02", Semester.Semester_1, ClassStatus.OPEN, 40),
-            ("IT002", "Lop 01", Semester.Semester_1, ClassStatus.CLOSED, 35),
-            ("IT003", "Lop 01", Semester.Semester_1, ClassStatus.CLOSED, 35),
-            ("IT004", "Lop 01", Semester.Semester_1, ClassStatus.OPEN, 30),
-            ("IT005", "Lop 01", Semester.Semester_2, ClassStatus.OPEN, 30),
-            ("IT006", "Lop 01", Semester.Semester_2, ClassStatus.OPEN, 30),
-            ("IT002", "Lop 02", Semester.Semester_2, ClassStatus.OPEN, 35),
+            # (subject_code, class_name, semester, status, max_students, start_date, number_of_sessions)
+            ("IT001", "Lop 01", Semester.Semester_1, ClassStatus.OPEN, 40, date(2025, 9, 1), 15),
+            ("IT001", "Lop 02", Semester.Semester_1, ClassStatus.OPEN, 40, date(2025, 9, 1), 15),
+            ("IT002", "Lop 01", Semester.Semester_1, ClassStatus.CLOSED, 35, date(2025, 9, 2), 15),
+            ("IT003", "Lop 01", Semester.Semester_1, ClassStatus.CLOSED, 35, date(2025, 9, 2), 15),
+            ("IT004", "Lop 01", Semester.Semester_1, ClassStatus.OPEN, 30, date(2025, 9, 3), 15),
+            ("IT005", "Lop 01", Semester.Semester_2, ClassStatus.OPEN, 30, date(2026, 2, 5), 15),
+            ("IT006", "Lop 01", Semester.Semester_2, ClassStatus.OPEN, 30, date(2026, 2, 5), 15),
+            ("IT002", "Lop 02", Semester.Semester_2, ClassStatus.OPEN, 35, date(2026, 2, 6), 15),
         ]
         classes = []
-        for subject_code, name, sem, status, max_std in classes_data:
+        for subject_code, name, sem, status, max_std, start_date, n_sessions in classes_data:
             sc = SubjectClass(
                 subject_id=subj[subject_code].id,
                 subject_class_name=name,
                 semester=sem,
                 academic_year=ACADEMIC_YEAR,
+                start_date=start_date,
+                number_of_sessions=n_sessions,
                 status=status,
                 max_students=max_std,
             )
             classes.append(sc)
         db.add_all(classes)
         db.flush()
-        # classes[0..7] tương ứng theo thứ tự khai báo phía trên
 
         # ================= SCHEDULE (lịch học hàng tuần) =================
         schedules_data = [
-            # (class_index, room_name, weekday, session, semester, year)
-            (0, "A101", Weekday.MON, SessionEnum.MORNING, Semester.Semester_1, ACADEMIC_YEAR),
-            (1, "A102", Weekday.MON, SessionEnum.AFTERNOON, Semester.Semester_1, ACADEMIC_YEAR),
-            (2, "B201", Weekday.TUE, SessionEnum.MORNING, Semester.Semester_1, ACADEMIC_YEAR),
-            (3, "B202", Weekday.TUE, SessionEnum.AFTERNOON, Semester.Semester_1, ACADEMIC_YEAR),
-            (4, "C301", Weekday.WED, SessionEnum.MORNING, Semester.Semester_1, ACADEMIC_YEAR),
-            (5, "A101", Weekday.THU, SessionEnum.MORNING, Semester.Semester_2, ACADEMIC_YEAR),
-            (6, "A102", Weekday.THU, SessionEnum.AFTERNOON, Semester.Semester_2, ACADEMIC_YEAR),
-            (7, "B201", Weekday.FRI, SessionEnum.MORNING, Semester.Semester_2, ACADEMIC_YEAR),
+            # (class_index, room_name, weekday, session)
+            (0, "A101", Weekday.MON, SessionEnum.MORNING),
+            (1, "A102", Weekday.MON, SessionEnum.AFTERNOON),
+            (2, "B201", Weekday.TUE, SessionEnum.MORNING),
+            (3, "B202", Weekday.TUE, SessionEnum.AFTERNOON),
+            (4, "C301", Weekday.WED, SessionEnum.MORNING),
+            (5, "A101", Weekday.THU, SessionEnum.MORNING),
+            (6, "A102", Weekday.THU, SessionEnum.AFTERNOON),
+            (7, "B201", Weekday.FRI, SessionEnum.MORNING),
         ]
         schedules = []
-        for class_idx, room_name, weekday, sess, sem, year in schedules_data:
+        for class_idx, room_name, weekday, sess in schedules_data:
             schedules.append(Schedule(
                 subject_class_id=classes[class_idx].id,
                 room_id=room[room_name].id,
                 weekday=weekday,
                 session=sess,
-                semester=sem,
-                academic_year=year,
             ))
         db.add_all(schedules)
+        db.flush()
+
+        # ================= CLASS SESSION (tự sinh theo Schedule) =================
+        class_sessions: list[ClassSession] = []
+        for sc in classes:
+            sc_schedules = [s for s in schedules if s.subject_class_id == sc.id]
+            class_sessions.extend(
+                generate_class_sessions(db=db, subject_class=sc, schedules=sc_schedules)
+            )
 
         # ================= TEACHING ASSIGNMENT =================
         teaching_data = [
@@ -172,52 +181,49 @@ def seed():
 
         # ================= ENROLLMENT (đăng ký học phần) =================
         enrollment_data = [
-            # (student_index, class_index, semester)
-            (0, 0, Semester.Semester_1),  # SV001 -> IT001-Lop01
-            (0, 2, Semester.Semester_1),  # SV001 -> IT002-Lop01
-            (1, 0, Semester.Semester_1),  # SV002 -> IT001-Lop01
-            (1, 3, Semester.Semester_1),  # SV002 -> IT003-Lop01
-            (2, 1, Semester.Semester_1),  # SV003 -> IT001-Lop02
-            (2, 4, Semester.Semester_1),  # SV003 -> IT004-Lop01
-            (3, 5, Semester.Semester_2),  # SV004 -> IT005-Lop01
-            (3, 6, Semester.Semester_2),  # SV004 -> IT006-Lop01
-            (4, 5, Semester.Semester_2),  # SV005 -> IT005-Lop01
-            (4, 7, Semester.Semester_2),  # SV005 -> IT002-Lop02
+            # (student_index, class_index)
+            (0, 0),  # SV001 -> IT001-Lop01
+            (0, 2),  # SV001 -> IT002-Lop01
+            (1, 0),  # SV002 -> IT001-Lop01
+            (1, 3),  # SV002 -> IT003-Lop01
+            (2, 1),  # SV003 -> IT001-Lop02
+            (2, 4),  # SV003 -> IT004-Lop01
+            (3, 5),  # SV004 -> IT005-Lop01
+            (3, 6),  # SV004 -> IT006-Lop01
+            (4, 5),  # SV005 -> IT005-Lop01
+            (4, 7),  # SV005 -> IT002-Lop02
         ]
         enrollments = [
             Enrollment(
                 student_id=students[s_idx].id,
                 subject_class_id=classes[c_idx].id,
-                semester=sem,
                 registered_at=datetime(2025, 8, 20, 9, 0, 0),
-                academic_year=ACADEMIC_YEAR,
             )
-            for s_idx, c_idx, sem in enrollment_data
+            for s_idx, c_idx in enrollment_data
         ]
         db.add_all(enrollments)
         db.flush()
 
         # ================= EXAM =================
         exams_data = [
-            # (class_index, room_name, exam_date, type, time_frame, semester, duration)
-            (0, "A101", datetime(2025, 10, 15), TypeOfExam.MIDTERM, TimeFrame.SHIFT_1, Semester.Semester_1, 60),
-            (0, "A101", datetime(2025, 12, 20), TypeOfExam.FINALTEST, TimeFrame.SHIFT_1, Semester.Semester_1, 90),
-            (1, "A102", datetime(2025, 10, 16), TypeOfExam.MIDTERM, TimeFrame.SHIFT_2, Semester.Semester_1, 60),
-            (2, "B201", datetime(2025, 12, 21), TypeOfExam.FINALTEST, TimeFrame.SHIFT_1, Semester.Semester_1, 90),
-            (3, "B202", datetime(2025, 12, 21), TypeOfExam.FINALTEST, TimeFrame.SHIFT_2, Semester.Semester_1, 90),
-            (4, "C301", datetime(2025, 10, 17), TypeOfExam.MIDTERM, TimeFrame.SHIFT_3, Semester.Semester_1, 60),
-            (5, "A101", datetime(2026, 3, 10), TypeOfExam.MIDTERM, TimeFrame.SHIFT_1, Semester.Semester_2, 60),
-            (6, "A102", datetime(2026, 5, 15), TypeOfExam.FINALTEST, TimeFrame.SHIFT_2, Semester.Semester_2, 90),
+            # (class_index, room_name, exam_date, type, time_frame, duration)
+            (0, "A101", date(2025, 10, 15), TypeOfExam.MIDTERM, TimeFrame.SHIFT_1, 60),
+            (0, "A101", date(2025, 12, 20), TypeOfExam.FINALTEST, TimeFrame.SHIFT_1, 90),
+            (1, "A102", date(2025, 10, 16), TypeOfExam.MIDTERM, TimeFrame.SHIFT_2, 60),
+            (2, "B201", date(2025, 12, 21), TypeOfExam.FINALTEST, TimeFrame.SHIFT_1, 90),
+            (3, "B202", date(2025, 12, 21), TypeOfExam.FINALTEST, TimeFrame.SHIFT_2, 90),
+            (4, "C301", date(2025, 10, 17), TypeOfExam.MIDTERM, TimeFrame.SHIFT_3, 60),
+            (5, "A101", date(2026, 3, 10), TypeOfExam.MIDTERM, TimeFrame.SHIFT_1, 60),
+            (6, "A102", date(2026, 5, 15), TypeOfExam.FINALTEST, TimeFrame.SHIFT_2, 90),
         ]
         exams = []
-        for class_idx, room_name, exam_date, etype, tframe, sem, duration in exams_data:
+        for class_idx, room_name, exam_date, etype, tframe, duration in exams_data:
             exams.append(Exam(
                 subject_class_id=classes[class_idx].id,
                 room_id=room[room_name].id,
                 exam_date=exam_date,
                 type=etype,
                 time_frame=tframe,
-                semester=sem,
                 duration=duration,
                 status=ExamStatus.SCHEDULED,
             ))
@@ -275,6 +281,7 @@ def seed():
         print(f"  - Rooms: {len(rooms)}")
         print(f"  - SubjectClasses: {len(classes)}")
         print(f"  - Schedules: {len(schedules)}")
+        print(f"  - ClassSessions: {len(class_sessions)}")
         print(f"  - TeachingAssignments: {len(assignments)}")
         print(f"  - Enrollments: {len(enrollments)}")
         print(f"  - Exams: {len(exams)}")
