@@ -1,5 +1,7 @@
 from enum import Enum
 from datetime import datetime, date, timedelta, timezone
+
+import cloudinary
 from werkzeug.security import generate_password_hash, check_password_hash
 from sqlalchemy import (
     Integer, String, DateTime, Float,
@@ -8,6 +10,8 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship, Session
 
 from server import Base, Classify
+
+DEFAULT_AVATAR_URL="https://res.cloudinary.com/qrmh4zb7/image/upload/w5wu4duozmvf2klosgld.png"
 
 # ================= ENUMS =================
 class UserRole(Enum):
@@ -89,6 +93,7 @@ class User(Base, Classify):
     __tablename__ = "users"
 
     user_code: Mapped[str] = mapped_column(String(20), unique=True, nullable=False, comment="VD: GV001, SV230001")
+    avatar: Mapped[str] = mapped_column(String(500), nullable=False, default=DEFAULT_AVATAR_URL)
     first_name: Mapped[str] = mapped_column(String(100), nullable=False)
     last_name: Mapped[str] = mapped_column(String(100), nullable=False)
     email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
@@ -506,3 +511,12 @@ class TokenBlacklist(Base):
 
     jti: Mapped[str] = mapped_column(String(255), primary_key=True, index=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+if __name__ == "__main__":
+    result = cloudinary.uploader.upload(
+        "assets/default_avatar.png",
+        public_id="avatar/default",
+        overwrite=True
+    )
+
+    print(result["secure_url"])

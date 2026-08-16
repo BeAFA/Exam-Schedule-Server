@@ -44,7 +44,7 @@ def check_exam_status(exam):
     return exam.status == ExamStatus.SCHEDULED
 
 
-def check_invigilator_conflict(db: Session, teacher_id: int, exam_id: int) -> bool:
+def check_invigilator_conflict(db: Session, teacher_id: int, exam_id: int, exclude_exam_id: int = None,) -> bool:
     new_exam = db.query(Exam.exam_date, Exam.time_frame).filter(Exam.id == exam_id).first()
 
     if new_exam is None:

@@ -2,8 +2,8 @@ import re
 from datetime import datetime, date
 from typing import Optional
 
-from pydantic import BaseModel, EmailStr, ConfigDict, field_validator
-
+from pydantic import BaseModel, EmailStr, ConfigDict, field_validator, Field
+from typing_extensions import Annotated
 from server.models import (
     Semester, ClassStatus, Weekday, SessionEN,
     TypeOfExam, TimeFrame, ExamStatus, UserRole, AttendanceStatus
@@ -14,8 +14,7 @@ class UserCreate(BaseModel):
     first_name: str
     last_name: str
     email: EmailStr
-    password: str
-    role: Optional[UserRole] = UserRole.STUDENT
+    password: Annotated[str, Field(min_length=8)]
 
 
 class UserLogin(BaseModel):
@@ -29,6 +28,7 @@ class UserOut(BaseModel):
     user_code: str
     first_name: str
     last_name: str
+    avatar: str
     email: EmailStr
     role: UserRole
 
@@ -159,14 +159,19 @@ class TeachingAssignmentOut(TeachingAssignmentCreate):
 
 
 # ================= EXAM =================
-class ExamCreate(BaseModel):
-    subject_class_id: int
+class ExamBase(BaseModel):
     room_id: int
     exam_date: date
     type: TypeOfExam
     time_frame: TimeFrame
     duration: int
 
+class ExamCreate(ExamBase):
+    subject_class_id: int
+
+
+class ExamUpdate(ExamBase):
+    status: ExamStatus
 
 class ExamOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)

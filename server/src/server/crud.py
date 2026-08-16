@@ -5,11 +5,13 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import select, func
 from server.models import User, UserRole, SubjectClass, TokenBlacklist, Subject, Room, Schedule, Enrollment, \
-    ClassStatus, TeachingAssignment, Exam, create_schedules_and_sessions, ExamStatus
+    ClassStatus, TeachingAssignment, Exam, create_schedules_and_sessions, ExamStatus, ExamInvigilator
 from server.rules import teaching_rule, exam_rule, subject_class_rule, enrollment_rule
 from server.rules.enrollment_rule import MAXIMUM_CREDITS
+from server.rules.exam_rule import check_exam_room_capacity
+from server.rules.subject_class_rule import check_room_capacity
 from server.schemas import UserCreate, SubjectClassCreate, EnrollmentCreate, TeachingAssignmentCreate, \
-    SubjectClassUpdate, ExamCreate
+    SubjectClassUpdate, ExamCreate, ExamUpdate
 
 
 def get_user_by_email(db: Session, email: str) -> User | None:
@@ -26,18 +28,17 @@ def _generate_user_code(db: Session, role: UserRole) -> str:
     return f"{prefix}{count + 1:06d}"
 
 
-def create_user(db: Session, user_data: UserCreate, max_retries: int = 3) -> User | None:
-    role = user_data.role
-
+def create_user(db: Session, user_data: UserCreate, avatar_url: str, max_retries: int = 3) -> User:
     for attempt in range(max_retries):
         try:
             user = User(
-                user_code=_generate_user_code(db, role),
+                user_code=_generate_user_code(db, UserRole.STUDENT),
                 first_name=user_data.first_name,
                 last_name=user_data.last_name,
+                avatar=avatar_url,
                 email=user_data.email,
-                role=role,
             )
+
             user.set_password(user_data.password)
             db.add(user)
             db.commit()
@@ -48,6 +49,8 @@ def create_user(db: Session, user_data: UserCreate, max_retries: int = 3) -> Use
             msg = str(e.orig)
             if "user_code" in msg and attempt < max_retries - 1:
                 continue
+            if "email" in msg:
+                raise HTTPException(400, "Email đã được sử dụng")
             raise
     raise RuntimeError("create_user: vượt quá số lần thử sinh user_code mà không thành công")
 
@@ -372,6 +375,13 @@ def create_exam(db: Session, exam_data: ExamCreate) -> Exam:
     if room is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Phòng thi không tồn tại.")
 
+    if not check_room_capacity(subject_class.max_students, room.capacity):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Phong được chọn không đủ chỗ cho lớp học phần thi."
+        )
+
+
     if not exam_rule.check_exam_date_after_last_session(db, exam_data.subject_class_id, exam_data.exam_date):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -381,14 +391,14 @@ def create_exam(db: Session, exam_data: ExamCreate) -> Exam:
         # 2. Kiểm tra ngày thi không được đụng lịch trình học của chính lớp đó (Option 2)
     if exam_rule.check_exam_conflict_with_regular_class(db, exam_data.subject_class_id, exam_data.exam_date):
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
+            status_code=status.HTTP_409_CONFLICT,
             detail="Ngày thi bị trùng với một buổi học thường kỳ của lớp học phần này.",
         )
 
     # Không xếp lịch thi trùng với buổi học thường (ClassSession) đang diễn ra trong phòng
     if exam_rule.check_room_used_by_class_session(db, exam_data.room_id, exam_data.exam_date):
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
+            status_code=status.HTTP_409_CONFLICT,
             detail="Phòng đang có lớp học thường vào ngày này, không thể xếp lịch thi.",
         )
 
@@ -397,7 +407,7 @@ def create_exam(db: Session, exam_data: ExamCreate) -> Exam:
             db, exam_data.room_id, exam_data.exam_date, exam_data.time_frame, exam_data.duration,
     ):
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
+            status_code=status.HTTP_409_CONFLICT,
             detail="Phòng đã có lịch thi khác trùng khung giờ này.",
         )
 
@@ -411,6 +421,72 @@ def create_exam(db: Session, exam_data: ExamCreate) -> Exam:
         status=ExamStatus.SCHEDULED,
     )
     db.add(exam)
+    db.commit()
+    db.refresh(exam)
+    return exam
+
+
+# check invigilator với các exam khác
+def update_exam(db: Session, exam_data: ExamUpdate, exam_id: int) -> Exam:
+    exam = db.scalar(select(Exam).where(Exam.id == exam_id))
+    if exam is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Không tìm thấy buổi thi của lớp học phần này."
+        )
+
+    if not exam_rule.check_exam_status(exam):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Buổi thi này đã hoàn thành hoặc đã hủy."
+        )
+
+    room = db.get(Room, exam_data.room_id)
+    if room is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Phòng thi không tồn tại.")
+
+    if not check_room_capacity(exam.subject_class.max_students, room.capacity):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Phong được chọn không đủ chỗ cho lớp học phần thi."
+        )
+
+    if not exam_rule.check_exam_date_after_last_session(db, exam.subject_class_id, exam_data.exam_date):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Ngày thi phải diễn ra SAU buổi học cuối cùng của lớp học phần.",
+        )
+
+        # 2. Kiểm tra ngày thi không được đụng lịch trình học của chính lớp đó (Option 2)
+    if exam_rule.check_exam_conflict_with_regular_class(db, exam.subject_class_id, exam_data.exam_date):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Ngày thi bị trùng với một buổi học thường kỳ của lớp học phần này.",
+        )
+
+    # Không xếp lịch thi trùng với buổi học thường (ClassSession) đang diễn ra trong phòng
+    if exam_rule.check_room_used_by_class_session(db, exam_data.room_id, exam_data.exam_date):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Phòng đang có lớp học thường vào ngày này, không thể xếp lịch thi.",
+        )
+
+    # Không trùng khung giờ với một kỳ thi khác đã xếp trong cùng phòng
+    if exam_rule.check_exam_time_overlap(
+            db, exam_data.room_id, exam_data.exam_date, exam_data.time_frame, exam_data.duration, exam_id
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Phòng đã có lịch thi khác trùng khung giờ này.",
+        )
+
+    exam.room_id=exam_data.room_id
+    exam.exam_date=exam_data.exam_date
+    exam.type=exam_data.type
+    exam.time_frame=exam_data.time_frame
+    exam.duration=exam_data.duration
+    exam.status=exam_data.status
+
     db.commit()
     db.refresh(exam)
     return exam

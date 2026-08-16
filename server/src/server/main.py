@@ -1,30 +1,63 @@
 from datetime import datetime, timezone
 
+import cloudinary
 import uvicorn
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, status, File, UploadFile
+from sqlalchemy import select
 from sqlalchemy.orm import Session
+from starlette.responses import JSONResponse
 
-from server import app, get_db
+from server import app, get_db, uploadImage, destroyImage
 from server import crud, schemas
 from server.auth import create_access_token, get_current_user, require_role, \
     get_token_payload
 from server.exceptions import register_exception_handlers
-from server.models import UserRole
+from server.models import UserRole, Exam
 
 register_exception_handlers(app)
 
+ALLOWED_TYPES = {"image/jpeg", "image/png"}
+MAX_AVATAR_SIZE = 5 * 1024 * 1024
 
 @app.get("/")
 def home():
     return {"message": "Hello World"}
 
 
+class UploadServiceError:
+    pass
+
+
 @app.post("/register", response_model=schemas.UserOut, status_code=status.HTTP_201_CREATED)
-def register(user_data: schemas.UserCreate, db: Session = Depends(get_db)):
+def register(user_data: schemas.UserCreate, file: UploadFile = File(...), db: Session = Depends(get_db)):
     existing = crud.get_user_by_email(db, user_data.email)
     if existing:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email đã được sử dụng")
-    return crud.create_user(db, user_data)
+
+    if file.content_type not in ALLOWED_TYPES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Ảnh phải là jpeg hoặc png."
+        )
+
+    contents = file.file.read()
+    if len(contents) > MAX_AVATAR_SIZE:
+        raise HTTPException(400, "Ảnh không được vượt quá 5MB.")
+    file.file.seek(0)
+
+    try:
+        avatar_url = uploadImage(file)
+    except UploadServiceError:
+        return JSONResponse(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            content={"error": "SERVICE_BUSY", "detail": "..."}
+        )
+    try:
+        return crud.create_user(db, user_data, avatar_url)
+    except Exception:
+        if not destroyImage(avatar_url):
+            cloudinary.logger.error(f"Không thể xóa avatar rác sau khi tạo user thất bại: {avatar_url}")
+        raise
 
 
 @app.post("/login")
@@ -200,6 +233,16 @@ def create_exam(
         db: Session = Depends(get_db),
 ):
     return crud.create_exam(db, data)
+
+@app.post("/exam/{exam_id}/update", response_model=schemas.ExamOut, status_code=status.HTTP_200_OK)
+def update_exam(
+        data: schemas.ExamUpdate,
+        exam_id: int,
+        current_user=Depends(require_role(UserRole.ADMIN)),
+        db: Session = Depends(get_db),
+):
+    exam = crud.update_exam(db, data, exam_id)
+    return schemas.ExamOut.model_validate(exam)
 
 
 @app.post("/enroll/create", response_model=schemas.EnrollmentOut, status_code=status.HTTP_201_CREATED)
