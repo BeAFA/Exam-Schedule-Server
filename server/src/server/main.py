@@ -12,7 +12,7 @@ from server import crud, schemas
 from server.auth import create_access_token, get_current_user, require_role, \
     get_token_payload
 from server.exceptions import register_exception_handlers
-from server.models import UserRole, Exam
+from server.models import UserRole, Exam, ExamInvigilator
 
 register_exception_handlers(app)
 
@@ -243,6 +243,41 @@ def update_exam(
 ):
     exam = crud.update_exam(db, data, exam_id)
     return schemas.ExamOut.model_validate(exam)
+
+@app.get("/exam_invigilator", response_model=list[schemas.ExamInvigilatorOut], status_code=status.HTTP_200_OK)
+def get_exam_invigilator(
+        exam_id: int,
+        current_user=Depends(require_role(UserRole.ADMIN)),
+        db: Session = Depends(get_db),
+):
+    return crud.get_all_exam_invigilator(db, exam_id)
+
+@app.post("/exam_invigilator/create", response_model=schemas.ExamInvigilatorOut, status_code=status.HTTP_201_CREATED)
+def create_exam_invigilator(
+        data: schemas.ExamInvigilatorCreate,
+        current_user=Depends(require_role(UserRole.ADMIN)),
+        db: Session = Depends(get_db),
+):
+    if not crud.get_exam_by_id(db, data.exam_id):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Không tìm thấy buỏi thi."
+        )
+    return crud.create_exam_invigilator(db, data)
+
+@app.post("/exam_invigilator/{exam_invigilator_id}/update", response_model=schemas.ExamInvigilatorOut, status_code=status.HTTP_200_OK)
+def update_exam_invigilator(
+        exam_invigilator_id: int,
+        data: schemas.ExamInvigilatorUpdate,
+        current_user=Depends(require_role(UserRole.ADMIN)),
+        db: Session = Depends(get_db),
+):
+    if not crud.get_all_exam_invigilator_by_id(db, exam_invigilator_id):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Không tìm thấy phân công coi thi."
+        )
+    return crud.update_exam_invigilator(db, data, exam_invigilator_id)
 
 
 @app.post("/enroll/create", response_model=schemas.EnrollmentOut, status_code=status.HTTP_201_CREATED)

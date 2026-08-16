@@ -452,7 +452,7 @@ class ExamInvigilator(Base, Classify):
     )
 
 
-# ================= EXAM - REGISTRATION (sinh viên <-> ca thi cụ thể) =================
+# ================= EXAM - REGISTRATION =================
 class ExamRegistration(Base, Classify):
     __tablename__ = "exam_registrations"
 

@@ -276,6 +276,10 @@ def get_teacher(db: Session) -> list[User]:
     return db.scalars(select(User).where(User.role == UserRole.TEACHER)).all()
 
 
+def get_teacher_by_id(db: Session, teacher_id: int) -> User:
+    return db.scalar(select(User).where(User.role == UserRole.TEACHER, User.id == teacher_id))
+
+
 def get_teaching_assignment_by_subject_class(db: Session, subject_class_id: int):
     subject_class = db.get(SubjectClass, subject_class_id)
     if subject_class is None:
@@ -366,6 +370,10 @@ def get_all_exam(db: Session) -> list[Exam]:
     return db.scalars(select(Exam)).all()
 
 
+def get_exam_by_id(db: Session, exam_id: int):
+    return db.scalar(select(Exam).where(Exam.id == exam_id))
+
+
 def create_exam(db: Session, exam_data: ExamCreate) -> Exam:
     subject_class = db.get(SubjectClass, exam_data.subject_class_id)
     if subject_class is None:
@@ -381,7 +389,6 @@ def create_exam(db: Session, exam_data: ExamCreate) -> Exam:
             detail="Phong được chọn không đủ chỗ cho lớp học phần thi."
         )
 
-
     if not exam_rule.check_exam_date_after_last_session(db, exam_data.subject_class_id, exam_data.exam_date):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -395,20 +402,13 @@ def create_exam(db: Session, exam_data: ExamCreate) -> Exam:
             detail="Ngày thi bị trùng với một buổi học thường kỳ của lớp học phần này.",
         )
 
-    # Không xếp lịch thi trùng với buổi học thường (ClassSession) đang diễn ra trong phòng
-    if exam_rule.check_room_used_by_class_session(db, exam_data.room_id, exam_data.exam_date):
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Phòng đang có lớp học thường vào ngày này, không thể xếp lịch thi.",
-        )
-
-    # Không trùng khung giờ với một kỳ thi khác đã xếp trong cùng phòng
-    if exam_rule.check_exam_time_overlap(
+    # Không xếp lịch thi trùng giờ với buổi học thường (ClassSession) hoặc ca thi (Exam) khác trong cùng phòng
+    if exam_rule.check_exam_duration_conflict(
             db, exam_data.room_id, exam_data.exam_date, exam_data.time_frame, exam_data.duration,
     ):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Phòng đã có lịch thi khác trùng khung giờ này.",
+            detail="Phòng đã có lớp học hoặc lịch thi khác trùng khung giờ này.",
         )
 
     exam = Exam(
@@ -426,7 +426,6 @@ def create_exam(db: Session, exam_data: ExamCreate) -> Exam:
     return exam
 
 
-# check invigilator với các exam khác
 def update_exam(db: Session, exam_data: ExamUpdate, exam_id: int) -> Exam:
     exam = db.scalar(select(Exam).where(Exam.id == exam_id))
     if exam is None:
@@ -464,32 +463,147 @@ def update_exam(db: Session, exam_data: ExamUpdate, exam_id: int) -> Exam:
             detail="Ngày thi bị trùng với một buổi học thường kỳ của lớp học phần này.",
         )
 
-    # Không xếp lịch thi trùng với buổi học thường (ClassSession) đang diễn ra trong phòng
-    if exam_rule.check_room_used_by_class_session(db, exam_data.room_id, exam_data.exam_date):
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Phòng đang có lớp học thường vào ngày này, không thể xếp lịch thi.",
-        )
-
-    # Không trùng khung giờ với một kỳ thi khác đã xếp trong cùng phòng
-    if exam_rule.check_exam_time_overlap(
-            db, exam_data.room_id, exam_data.exam_date, exam_data.time_frame, exam_data.duration, exam_id
+    # Không xếp lịch thi trùng giờ với buổi học thường (ClassSession) hoặc ca thi (Exam) khác trong cùng phòng
+    if exam_rule.check_exam_duration_conflict(
+            db, exam_data.room_id, exam_data.exam_date, exam_data.time_frame, exam_data.duration,
+            exclude_exam_id=exam_id,
     ):
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Phòng đã có lịch thi khác trùng khung giờ này.",
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Phòng đã có lớp học hoặc lịch thi khác trùng khung giờ này.",
         )
 
-    exam.room_id=exam_data.room_id
-    exam.exam_date=exam_data.exam_date
-    exam.type=exam_data.type
-    exam.time_frame=exam_data.time_frame
-    exam.duration=exam_data.duration
-    exam.status=exam_data.status
+    for inv in exam.invigilators:
+        if exam_rule.check_invigilator_conflict(
+                db, inv.teacher_id, exam_data.exam_date, exam_data.time_frame, exclude_exam_id=exam_id
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Giảng viên coi thi (id={inv.teacher_id}) bị trùng lịch vào khung giờ mới.",
+            )
+
+    exam.room_id = exam_data.room_id
+    exam.exam_date = exam_data.exam_date
+    exam.type = exam_data.type
+    exam.time_frame = exam_data.time_frame
+    exam.duration = exam_data.duration
+    exam.status = exam_data.status
 
     db.commit()
     db.refresh(exam)
     return exam
+
+
+def get_all_exam_invigilator(db: Session, exam_id: int):
+    return db.scalars(select(ExamInvigilator).where(ExamInvigilator.exam_id == exam_id)).all()
+
+
+def get_all_exam_invigilator_by_id(db: Session, exam_invigilator_id: int):
+    return db.scalar(select(ExamInvigilator).where(ExamInvigilator.id == exam_invigilator_id))
+
+
+def get_exam_invigilator_by_teacher_id(db: Session, teacher_id: int) -> list[ExamInvigilator]:
+    return db.scalars(select(ExamInvigilator).where(ExamInvigilator.teacher_id == teacher_id)).all()
+
+
+def create_exam_invigilator(db: Session, exam_invigilator_data) -> ExamInvigilator:
+    exam = get_exam_by_id(db, exam_invigilator_data.exam_id)
+    if exam is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Không tìm thấy buổi thi.")
+
+    # giảng viên có tồn tại
+    if not get_teacher_by_id(db, exam_invigilator_data.teacher_id):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Không tìm thấy giảng viên."
+        )
+
+    # đã được phân công coi thi đúng ca thi này chưa
+    if exam_rule.check_duplicate_exam_invigilator(db, exam.id, exam_invigilator_data.teacher_id):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Giảng viên đã được phân công coi thi ca thi này rồi."
+        )
+
+    # trùng lịch giảng dạy cố định (thứ/buổi) với ngày giờ của ca thi
+    if exam_rule.check_teacher_teaching_conflict_with_exam(
+            db, exam_invigilator_data.teacher_id, exam.exam_date, exam.time_frame, exam.duration
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Giảng viên đang có lịch giảng dạy trùng với ca thi này."
+        )
+
+    # trùng lịch coi thi khác
+    if exam_rule.check_invigilator_conflict(db, exam_invigilator_data.teacher_id, exam.exam_date, exam.time_frame):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Giảng viên bị trùng lịch coi thi."
+        )
+
+    exam_invigilator = ExamInvigilator(
+        teacher_id=exam_invigilator_data.teacher_id,
+        exam_id=exam_invigilator_data.exam_id,
+    )
+
+    db.add(exam_invigilator)
+    db.commit()
+    db.refresh(exam_invigilator)
+
+    return exam_invigilator
+
+def update_exam_invigilator(db: Session, exam_invigilator_data, exam_invigilator_id: int) -> ExamInvigilator:
+    exam_invigilator = get_all_exam_invigilator_by_id(db, exam_invigilator_id)
+    if exam_invigilator is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Không tìm thấy phân công coi thi.")
+
+    exam = exam_invigilator.exam
+
+    # giảng viên có tồn tại
+    if not get_teacher_by_id(db, exam_invigilator_data.teacher_id):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Không tìm thấy giảng viên."
+        )
+
+    # đã được phân công coi thi đúng ca thi này chưa (loại trừ chính bản ghi đang sửa)
+    if exam_rule.check_duplicate_exam_invigilator(
+            db, exam.id, exam_invigilator_data.teacher_id, exclude_id=exam_invigilator_id
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Giảng viên đã được phân công coi thi ca thi này rồi."
+        )
+
+    # trùng lịch giảng dạy cố định (thứ/buổi) với ngày giờ của ca thi
+    if exam_rule.check_teacher_teaching_conflict_with_exam(
+            db, exam_invigilator_data.teacher_id, exam.exam_date, exam.time_frame, exam.duration
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Giảng viên đang có lịch giảng dạy trùng với ca thi này."
+        )
+
+    # trùng lịch coi thi khác (loại trừ chính bản ghi đang sửa)
+    if exam_rule.check_invigilator_conflict(
+            db, exam_invigilator_data.teacher_id, exam.exam_date, exam.time_frame,
+            exclude_invigilator_id=exam_invigilator_id,
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Giảng viên bị trùng lịch coi thi."
+        )
+
+    exam_invigilator.teacher_id = exam_invigilator_data.teacher_id
+
+    db.commit()
+    db.refresh(exam_invigilator)
+
+    return exam_invigilator
+
+
+def get_all_teaching_assignments_by_teacher_id(db: Session, teacher_id: int) -> list[TeachingAssignment]:
+    return db.scalars(select(TeachingAssignment).where(TeachingAssignment.teacher_id == teacher_id)).all()
 
 
 def create_enrollment(db: Session, student_id: int, data: EnrollmentCreate) -> Enrollment:

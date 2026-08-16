@@ -190,6 +190,9 @@ class ExamInvigilatorCreate(BaseModel):
     exam_id: int
     teacher_id: int
 
+class ExamInvigilatorUpdate(BaseModel):
+    teacher_id: int
+
 
 class ExamInvigilatorOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
