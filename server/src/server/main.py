@@ -3,7 +3,6 @@ from datetime import datetime, timezone
 import cloudinary
 import uvicorn
 from fastapi import Depends, HTTPException, status, File, UploadFile
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 from starlette.responses import JSONResponse
 

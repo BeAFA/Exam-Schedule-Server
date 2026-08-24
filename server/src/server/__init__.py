@@ -3,13 +3,11 @@ import re
 from pathlib import Path
 from datetime import datetime
 
-import uvicorn
 from sqlalchemy import create_engine, Integer, DateTime, func, Boolean, MetaData
 from sqlalchemy.orm import sessionmaker, DeclarativeBase, Mapped, mapped_column
 from fastapi import FastAPI
 
 import cloudinary
-from cloudinary import CloudinaryImage
 import cloudinary.uploader
 import cloudinary.api
 
