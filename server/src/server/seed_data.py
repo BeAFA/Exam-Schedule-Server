@@ -1,18 +1,4 @@
-"""
-Script tạo dữ liệu mẫu cho hệ thống quản lý lịch thi.
-
-LƯU Ý TRƯỚC KHI CHẠY:
-- Dòng import session/engine bên dưới là GIẢ ĐỊNH theo pattern phổ biến
-  (server/__init__.py export SessionLocal, engine). Nếu project bạn đặt tên
-  khác (VD: get_db(), db.session...), chỉnh lại đúng 3 dòng import đầu file.
-- Toàn bộ user mẫu dùng chung mật khẩu: "123456" (chỉ để test/demo).
-- Thứ tự insert đã được sắp theo đúng phụ thuộc khóa ngoại: User/Subject/Room
-  -> SubjectClass -> Schedule/TeachingAssignment/Enrollment -> Exam
-  -> ExamInvigilator/ExamRegistration.
-"""
-
-from datetime import datetime, date
-
+from datetime import date
 from server import Base, engine, SessionLocal
 from server.models import (
     User, UserRole,
@@ -23,8 +9,6 @@ from server.models import (
     ClassSession, generate_class_sessions,
     Exam, TypeOfExam, TimeFrame, ExamStatus,
     ExamInvigilator,
-    ExamRegistration, AttendanceStatus,
-    Enrollment,
     TeachingAssignment,
 )
 
@@ -179,31 +163,6 @@ def seed():
         ]
         db.add_all(assignments)
 
-        # ================= ENROLLMENT (đăng ký học phần) =================
-        enrollment_data = [
-            # (student_index, class_index)
-            (0, 0),  # SV001 -> IT001-Lop01
-            (0, 2),  # SV001 -> IT002-Lop01
-            (1, 0),  # SV002 -> IT001-Lop01
-            (1, 3),  # SV002 -> IT003-Lop01
-            (2, 1),  # SV003 -> IT001-Lop02
-            (2, 4),  # SV003 -> IT004-Lop01
-            (3, 5),  # SV004 -> IT005-Lop01
-            (3, 6),  # SV004 -> IT006-Lop01
-            (4, 5),  # SV005 -> IT005-Lop01
-            (4, 7),  # SV005 -> IT002-Lop02
-        ]
-        enrollments = [
-            Enrollment(
-                student_id=students[s_idx].id,
-                subject_class_id=classes[c_idx].id,
-                registered_at=datetime(2025, 8, 20, 9, 0, 0),
-            )
-            for s_idx, c_idx in enrollment_data
-        ]
-        db.add_all(enrollments)
-        db.flush()
-
         # ================= EXAM =================
         exams_data = [
             # (class_index, room_name, exam_date, type, time_frame, duration)
@@ -247,31 +206,6 @@ def seed():
         ]
         db.add_all(invigilators)
 
-        # ================= EXAM REGISTRATION =================
-        # (exam_index, student_index, seat_number)
-        registration_data = [
-            (0, 0, "A01"),  # exams[0] IT001-Lop01 midterm <- SV001
-            (0, 1, "A02"),  # <- SV002
-            (1, 0, "A01"),  # exams[1] IT001-Lop01 final <- SV001
-            (1, 1, "A02"),  # <- SV002
-            (2, 2, "A01"),  # exams[2] IT001-Lop02 midterm <- SV003
-            (3, 0, "A01"),  # exams[3] IT002-Lop01 final <- SV001
-            (4, 1, "A01"),  # exams[4] IT003-Lop01 final <- SV002
-            (5, 2, "A01"),  # exams[5] IT004-Lop01 midterm <- SV003
-            (6, 3, "A01"),  # exams[6] IT005-Lop01 midterm <- SV004
-            (7, 3, "A01"),  # exams[7] IT006-Lop01 final <- SV004
-        ]
-        registrations = [
-            ExamRegistration(
-                exam_id=exams[e_idx].id,
-                student_id=students[s_idx].id,
-                seat_number=seat,
-                attendance_status=AttendanceStatus.PRESENT,
-            )
-            for e_idx, s_idx, seat in registration_data
-        ]
-        db.add_all(registrations)
-
         db.commit()
 
         print("Seed dữ liệu thành công:")
@@ -283,10 +217,8 @@ def seed():
         print(f"  - Schedules: {len(schedules)}")
         print(f"  - ClassSessions: {len(class_sessions)}")
         print(f"  - TeachingAssignments: {len(assignments)}")
-        print(f"  - Enrollments: {len(enrollments)}")
         print(f"  - Exams: {len(exams)}")
         print(f"  - ExamInvigilators: {len(invigilators)}")
-        print(f"  - ExamRegistrations: {len(registrations)}")
         print(f"  Mat khau mac dinh cho tat ca user: {DEFAULT_PASSWORD}")
 
     except Exception:

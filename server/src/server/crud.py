@@ -1,58 +1,17 @@
 from datetime import datetime, timezone
-
 from fastapi import HTTPException, status
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import select, func
-from server.models import User, UserRole, SubjectClass, TokenBlacklist, Subject, Room, Schedule, Enrollment, \
+from server.models import User, UserRole, SubjectClass, TokenBlacklist, Subject, Room, Schedule, \
     ClassStatus, TeachingAssignment, Exam, create_schedules_and_sessions, ExamStatus, ExamInvigilator
-from server.rules import teaching_rule, exam_rule, subject_class_rule, enrollment_rule
-from server.rules.enrollment_rule import MAXIMUM_CREDITS
-from server.rules.exam_rule import check_exam_room_capacity
+from server.rules import teaching_rule, exam_rule, subject_class_rule
 from server.rules.subject_class_rule import check_room_capacity
-from server.schemas import UserCreate, SubjectClassCreate, EnrollmentCreate, TeachingAssignmentCreate, \
+from server.schemas import SubjectClassCreate, TeachingAssignmentCreate, \
     SubjectClassUpdate, ExamCreate, ExamUpdate
 
 
 def get_user_by_email(db: Session, email: str) -> User | None:
     return db.execute(select(User).where(User.email == email)).scalar_one_or_none()
-
-
-def _generate_user_code(db: Session, role: UserRole) -> str:
-    """Sinh mã user dạng SV230001 / GV230001 dựa theo role"""
-    """Có thể race condition khi commit cùng lúc"""
-    prefix = "SV" if role == UserRole.STUDENT else "GV" if role == UserRole.TEACHER else "AD"
-    count = db.execute(
-        select(func.count()).select_from(User).where(User.role == role)
-    ).scalar_one()
-    return f"{prefix}{count + 1:06d}"
-
-
-def create_user(db: Session, user_data: UserCreate, avatar_url: str, max_retries: int = 3) -> User:
-    for attempt in range(max_retries):
-        try:
-            user = User(
-                user_code=_generate_user_code(db, UserRole.STUDENT),
-                first_name=user_data.first_name,
-                last_name=user_data.last_name,
-                avatar=avatar_url,
-                email=user_data.email,
-            )
-
-            user.set_password(user_data.password)
-            db.add(user)
-            db.commit()
-            db.refresh(user)
-            return user
-        except IntegrityError as e:
-            db.rollback()
-            msg = str(e.orig)
-            if "user_code" in msg and attempt < max_retries - 1:
-                continue
-            if "email" in msg:
-                raise HTTPException(400, "Email đã được sử dụng")
-            raise
-    raise RuntimeError("create_user: vượt quá số lần thử sinh user_code mà không thành công")
 
 
 def blacklist_token(db: Session, jti: str, expires_at: datetime):
@@ -67,7 +26,6 @@ def is_token_blacklisted(db: Session, jti: str) -> bool:
 
 
 def clear_expired_blacklist(db: Session):
-    """Dọn các token blacklist đã hết hạn (gọi định kỳ hoặc mỗi lần logout)."""
     db.query(TokenBlacklist).filter(
         TokenBlacklist.expires_at < datetime.now(timezone.utc)
     ).delete()
@@ -134,7 +92,7 @@ def _validate_schedules_or_raise(
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Phòng {room.name} đã được xếp lịch trùng "
-                       f"{item.weekday.value}/{item.session.value} trong học kỳ và năm học này.",
+                       f"{item.weekday.value}/{item.session.value} trong học kỳ của năm học này.",
             )
 
 
@@ -144,6 +102,15 @@ def create_subject_class(db: Session, subject_class_data: SubjectClassCreate) ->
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Môn học không tồn tại",
+        )
+
+    if subject_class_rule.check_subject_class_identity_conflict(
+            db, subject_class_data.subject_id, subject_class_data.subject_class_name,
+            subject_class_data.semester, subject_class_data.academic_year,
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Lớp học phần này đã tồn tại.",
         )
 
     if not subject_class_rule.check_max_students_positive(subject_class_data.max_students):
@@ -179,7 +146,6 @@ def create_subject_class(db: Session, subject_class_data: SubjectClassCreate) ->
     db.add(subject_class)
     db.flush()
 
-    # Chuyển đổi Pydantic schemas sang list[dict]
     schedule_data = [
         {
             "room_id": item.room_id,
@@ -220,6 +186,16 @@ def update_subject_class(db: Session, subject_class_data: SubjectClassUpdate, su
     if not subject_class_rule.check_number_of_sessions_positive(subject_class_data.number_of_sessions):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Số buổi học phải lớn hơn 0")
 
+    if subject_class_rule.check_subject_class_identity_conflict(
+            db, subject_class.subject_id, subject_class_data.subject_class_name,
+            subject_class_data.semester, subject_class_data.academic_year,
+            exclude_subject_class_id=subject_class_id,
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Lớp học phần với thông tin này đã tồn tại.",
+        )
+
     _validate_schedules_or_raise(
         db,
         subject_class_data.schedules,
@@ -240,6 +216,7 @@ def update_subject_class(db: Session, subject_class_data: SubjectClassUpdate, su
 
     # Xoá toàn bộ Schedule cũ của lớp (cascade xoá luôn ClassSession cũ) rồi tạo lại từ đầu
     old_schedules = db.scalars(select(Schedule).where(Schedule.subject_class_id == subject_class_id)).all()
+
     for old_schedule in old_schedules:
         db.delete(old_schedule)
     db.flush()
@@ -272,6 +249,39 @@ def update_subject_class(db: Session, subject_class_data: SubjectClassUpdate, su
     return subject_class, schedules
 
 
+def change_subject_class_active(db: Session, ids: list[int]) -> list[SubjectClass]:
+    subject_classes = db.scalars(select(SubjectClass).where(SubjectClass.id.in_(ids))).all()
+
+    found_ids = {sc.id for sc in subject_classes}
+    missing = set(ids) - found_ids
+    if missing:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
+                            detail=f"Không tìm thấy lớp học phần với id: {sorted(missing)}")
+
+    for subject_class in subject_classes:
+        new_active = not subject_class.is_active
+
+        # Chỉ chặn khi đang chuyển SANG xóa mềm (True -> False)
+        if not new_active and subject_class.status == ClassStatus.FINISHED:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Lớp học phần (id={subject_class.id}) đã hoàn thành (FINISHED), không thể xóa.",
+            )
+
+        subject_class.is_active = new_active
+
+        # Khi xóa mềm lớp, cascade xóa mềm các buổi thi SCHEDULED liên quan
+        if not new_active:
+            for exam in subject_class.exams:
+                if exam.is_active and exam.status != ExamStatus.FINISHED:
+                    exam.is_active = False
+
+    db.commit()
+    for subject_class in subject_classes:
+        db.refresh(subject_class)
+    return subject_classes
+
+
 def get_teacher(db: Session) -> list[User]:
     return db.scalars(select(User).where(User.role == UserRole.TEACHER)).all()
 
@@ -290,6 +300,10 @@ def get_teaching_assignment_by_subject_class(db: Session, subject_class_id: int)
     return db.scalar(
         select(TeachingAssignment).where(TeachingAssignment.subject_class_id == subject_class_id)
     )
+
+
+def get_all_teaching_assignments_by_teacher_id(db: Session, teacher_id: int) -> list[TeachingAssignment]:
+    return db.scalars(select(TeachingAssignment).where(TeachingAssignment.teacher_id == teacher_id)).all()
 
 
 def create_teacher_assignment(db: Session, teaching_assignment_data: TeachingAssignmentCreate) -> TeachingAssignment:
@@ -395,14 +409,6 @@ def create_exam(db: Session, exam_data: ExamCreate) -> Exam:
             detail="Ngày thi phải diễn ra SAU buổi học cuối cùng của lớp học phần.",
         )
 
-        # 2. Kiểm tra ngày thi không được đụng lịch trình học của chính lớp đó (Option 2)
-    if exam_rule.check_exam_conflict_with_regular_class(db, exam_data.subject_class_id, exam_data.exam_date):
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Ngày thi bị trùng với một buổi học thường kỳ của lớp học phần này.",
-        )
-
-    # Không xếp lịch thi trùng giờ với buổi học thường (ClassSession) hoặc ca thi (Exam) khác trong cùng phòng
     if exam_rule.check_exam_duration_conflict(
             db, exam_data.room_id, exam_data.exam_date, exam_data.time_frame, exam_data.duration,
     ):
@@ -456,13 +462,6 @@ def update_exam(db: Session, exam_data: ExamUpdate, exam_id: int) -> Exam:
             detail="Ngày thi phải diễn ra SAU buổi học cuối cùng của lớp học phần.",
         )
 
-        # 2. Kiểm tra ngày thi không được đụng lịch trình học của chính lớp đó (Option 2)
-    if exam_rule.check_exam_conflict_with_regular_class(db, exam.subject_class_id, exam_data.exam_date):
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Ngày thi bị trùng với một buổi học thường kỳ của lớp học phần này.",
-        )
-
     # Không xếp lịch thi trùng giờ với buổi học thường (ClassSession) hoặc ca thi (Exam) khác trong cùng phòng
     if exam_rule.check_exam_duration_conflict(
             db, exam_data.room_id, exam_data.exam_date, exam_data.time_frame, exam_data.duration,
@@ -475,7 +474,8 @@ def update_exam(db: Session, exam_data: ExamUpdate, exam_id: int) -> Exam:
 
     for inv in exam.invigilators:
         if exam_rule.check_invigilator_conflict(
-                db, inv.teacher_id, exam_data.exam_date, exam_data.time_frame, exclude_exam_id=exam_id
+                db, inv.teacher_id, exam_data.exam_date, exam_data.time_frame, exam_data.duration,
+                exclude_exam_id=exam_id,
         ):
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
@@ -492,6 +492,30 @@ def update_exam(db: Session, exam_data: ExamUpdate, exam_id: int) -> Exam:
     db.commit()
     db.refresh(exam)
     return exam
+
+
+def change_exam_active(db: Session, ids: list[int]) -> list[Exam]:
+    exams = db.scalars(select(Exam).where(Exam.id.in_(ids))).all()
+
+    found_ids = {e.id for e in exams}
+    missing = set(ids) - found_ids
+    if missing:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
+                            detail=f"Không tìm thấy buổi thi với id: {sorted(missing)}")
+
+    for exam in exams:
+        new_active = not exam.is_active
+        if not new_active and exam.status == ExamStatus.FINISHED:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Buổi thi (id={exam.id}) đã hoàn thành (FINISHED), không thể xóa.",
+            )
+        exam.is_active = new_active
+
+    db.commit()
+    for exam in exams:
+        db.refresh(exam)
+    return exams
 
 
 def get_all_exam_invigilator(db: Session, exam_id: int):
@@ -535,7 +559,9 @@ def create_exam_invigilator(db: Session, exam_invigilator_data) -> ExamInvigilat
         )
 
     # trùng lịch coi thi khác
-    if exam_rule.check_invigilator_conflict(db, exam_invigilator_data.teacher_id, exam.exam_date, exam.time_frame):
+    if exam_rule.check_invigilator_conflict(
+            db, exam_invigilator_data.teacher_id, exam.exam_date, exam.time_frame, exam.duration,
+    ):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Giảng viên bị trùng lịch coi thi."
@@ -551,6 +577,7 @@ def create_exam_invigilator(db: Session, exam_invigilator_data) -> ExamInvigilat
     db.refresh(exam_invigilator)
 
     return exam_invigilator
+
 
 def update_exam_invigilator(db: Session, exam_invigilator_data, exam_invigilator_id: int) -> ExamInvigilator:
     exam_invigilator = get_all_exam_invigilator_by_id(db, exam_invigilator_id)
@@ -586,7 +613,7 @@ def update_exam_invigilator(db: Session, exam_invigilator_data, exam_invigilator
 
     # trùng lịch coi thi khác (loại trừ chính bản ghi đang sửa)
     if exam_rule.check_invigilator_conflict(
-            db, exam_invigilator_data.teacher_id, exam.exam_date, exam.time_frame,
+            db, exam_invigilator_data.teacher_id, exam.exam_date, exam.time_frame, exam.duration,
             exclude_invigilator_id=exam_invigilator_id,
     ):
         raise HTTPException(
@@ -600,64 +627,3 @@ def update_exam_invigilator(db: Session, exam_invigilator_data, exam_invigilator
     db.refresh(exam_invigilator)
 
     return exam_invigilator
-
-
-def get_all_teaching_assignments_by_teacher_id(db: Session, teacher_id: int) -> list[TeachingAssignment]:
-    return db.scalars(select(TeachingAssignment).where(TeachingAssignment.teacher_id == teacher_id)).all()
-
-
-def create_enrollment(db: Session, student_id: int, data: EnrollmentCreate) -> Enrollment:
-    # with_for_update() khóa dòng subject_class -> tránh 2 sinh viên cùng đăng ký
-    # vượt sĩ số trong lúc race condition (chỉ nhả lock khi commit/rollback).
-    subject_class = db.execute(
-        select(SubjectClass)
-        .where(SubjectClass.id == data.subject_class_id)
-        .with_for_update()
-    ).scalar_one_or_none()
-
-    if subject_class is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Lớp học phần không tồn tại.",
-        )
-
-    if not enrollment_rule.check_subject_class_status(subject_class):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Lớp học phần không mở đăng ký (đã đóng hoặc đã kết thúc).",
-        )
-
-    if enrollment_rule.check_duplicate_enrollment(db, student_id, data.subject_class_id):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Bạn đã đăng ký lớp học phần này rồi.",
-        )
-
-    if not enrollment_rule.check_subject_class_capacity(db, subject_class):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Lớp học phần đã đủ sĩ số, không thể đăng ký thêm.",
-        )
-
-    if enrollment_rule.check_schedule_conflict(
-            db, student_id, data.subject_class_id, subject_class.semester, subject_class.academic_year
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Lịch học của lớp này bị trùng với một lớp bạn đã đăng ký trong học kỳ này.",
-        )
-
-    if not enrollment_rule.check_credit_limit(db, student_id, subject_class):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Đăng ký lớp này sẽ vượt quá giới hạn {MAXIMUM_CREDITS} tín chỉ trong học kỳ.",
-        )
-
-    enrollment = Enrollment(
-        student_id=student_id,
-        subject_class_id=data.subject_class_id,
-    )
-    db.add(enrollment)
-    db.commit()
-    db.refresh(enrollment)
-    return enrollment

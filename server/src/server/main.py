@@ -1,62 +1,23 @@
 from datetime import datetime, timezone
-
-import cloudinary
 import uvicorn
-from fastapi import Depends, HTTPException, status, File, UploadFile
+from fastapi import Depends, HTTPException, status
 from sqlalchemy.orm import Session
-from starlette.responses import JSONResponse
-
-from server import app, get_db, uploadImage, destroyImage
+from server import app, get_db
 from server import crud, schemas
 from server.auth import create_access_token, get_current_user, require_role, \
     get_token_payload
 from server.exceptions import register_exception_handlers
-from server.models import UserRole, Exam, ExamInvigilator
+from server.models import UserRole
 
 register_exception_handlers(app)
 
 ALLOWED_TYPES = {"image/jpeg", "image/png"}
 MAX_AVATAR_SIZE = 5 * 1024 * 1024
 
+
 @app.get("/")
 def home():
     return {"message": "Hello World"}
-
-
-class UploadServiceError:
-    pass
-
-
-@app.post("/register", response_model=schemas.UserOut, status_code=status.HTTP_201_CREATED)
-def register(user_data: schemas.UserCreate, file: UploadFile = File(...), db: Session = Depends(get_db)):
-    existing = crud.get_user_by_email(db, user_data.email)
-    if existing:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email đã được sử dụng")
-
-    if file.content_type not in ALLOWED_TYPES:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Ảnh phải là jpeg hoặc png."
-        )
-
-    contents = file.file.read()
-    if len(contents) > MAX_AVATAR_SIZE:
-        raise HTTPException(400, "Ảnh không được vượt quá 5MB.")
-    file.file.seek(0)
-
-    try:
-        avatar_url = uploadImage(file)
-    except UploadServiceError:
-        return JSONResponse(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            content={"error": "SERVICE_BUSY", "detail": "..."}
-        )
-    try:
-        return crud.create_user(db, user_data, avatar_url)
-    except Exception:
-        if not destroyImage(avatar_url):
-            cloudinary.logger.error(f"Không thể xóa avatar rác sau khi tạo user thất bại: {avatar_url}")
-        raise
 
 
 @app.post("/login")
@@ -113,8 +74,10 @@ def get_room(current_user=Depends(require_role(UserRole.TEACHER, UserRole.ADMIN)
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Hiện không có phòng nào cả!")
     return rooms
 
+
 @app.get("/schedule", response_model=list[schemas.ScheduleOut], status_code=status.HTTP_200_OK)
-def get_schedule(current_user=Depends(require_role(UserRole.STUDENT, UserRole.TEACHER, UserRole.ADMIN)), db: Session = Depends(get_db)):
+def get_schedule(current_user=Depends(require_role(UserRole.STUDENT, UserRole.TEACHER, UserRole.ADMIN)),
+                 db: Session = Depends(get_db)):
     schedules = crud.get_all_schedule(db)
     if not schedules:
         raise HTTPException(
@@ -160,6 +123,19 @@ async def update_subject_class(
         subject_class=schemas.SubjectClassOut.model_validate(subject_class),
         schedules=[schemas.ScheduleOut.model_validate(s) for s in schedules],
     )
+
+@app.post("/subject_class/s_delete", response_model=list[schemas.ChangeActiveOut],
+          status_code=status.HTTP_200_OK)
+def change_subject_class_active(
+        data: schemas.ChangeActiveIn,
+        current_user=Depends(require_role(UserRole.ADMIN)),
+        db: Session = Depends(get_db),
+):
+    subject_classes = crud.change_subject_class_active(db, data.ids)
+    return [
+        schemas.ChangeActiveOut(id=sc.id, is_active=sc.is_active)
+        for sc in subject_classes
+    ]
 
 
 @app.get("/teacher", response_model=list[schemas.UserOut], status_code=status.HTTP_200_OK)
@@ -233,6 +209,7 @@ def create_exam(
 ):
     return crud.create_exam(db, data)
 
+
 @app.post("/exam/{exam_id}/update", response_model=schemas.ExamOut, status_code=status.HTTP_200_OK)
 def update_exam(
         data: schemas.ExamUpdate,
@@ -243,6 +220,19 @@ def update_exam(
     exam = crud.update_exam(db, data, exam_id)
     return schemas.ExamOut.model_validate(exam)
 
+@app.post("/exam/s_delete", response_model=list[schemas.ChangeActiveOut], status_code=status.HTTP_200_OK)
+def change_exam_active(
+        data: schemas.ChangeActiveIn,
+        current_user=Depends(require_role(UserRole.ADMIN)),
+        db: Session = Depends(get_db),
+):
+    exams = crud.change_exam_active(db, data.ids)
+    return [
+        schemas.ChangeActiveOut(id=e.id, is_active=e.is_active)
+        for e in exams
+    ]
+
+
 @app.get("/exam_invigilator", response_model=list[schemas.ExamInvigilatorOut], status_code=status.HTTP_200_OK)
 def get_exam_invigilator(
         exam_id: int,
@@ -251,41 +241,25 @@ def get_exam_invigilator(
 ):
     return crud.get_all_exam_invigilator(db, exam_id)
 
+
 @app.post("/exam_invigilator/create", response_model=schemas.ExamInvigilatorOut, status_code=status.HTTP_201_CREATED)
 def create_exam_invigilator(
         data: schemas.ExamInvigilatorCreate,
         current_user=Depends(require_role(UserRole.ADMIN)),
         db: Session = Depends(get_db),
 ):
-    if not crud.get_exam_by_id(db, data.exam_id):
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Không tìm thấy buỏi thi."
-        )
     return crud.create_exam_invigilator(db, data)
 
-@app.post("/exam_invigilator/{exam_invigilator_id}/update", response_model=schemas.ExamInvigilatorOut, status_code=status.HTTP_200_OK)
+
+@app.post("/exam_invigilator/{exam_invigilator_id}/update", response_model=schemas.ExamInvigilatorOut,
+          status_code=status.HTTP_200_OK)
 def update_exam_invigilator(
         exam_invigilator_id: int,
         data: schemas.ExamInvigilatorUpdate,
         current_user=Depends(require_role(UserRole.ADMIN)),
         db: Session = Depends(get_db),
 ):
-    if not crud.get_all_exam_invigilator_by_id(db, exam_invigilator_id):
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Không tìm thấy phân công coi thi."
-        )
     return crud.update_exam_invigilator(db, data, exam_invigilator_id)
-
-
-@app.post("/enroll/create", response_model=schemas.EnrollmentOut, status_code=status.HTTP_201_CREATED)
-def create_enroll(
-        data: schemas.EnrollmentCreate,
-        current_user=Depends(require_role(UserRole.STUDENT)),
-        db: Session = Depends(get_db),
-):
-    return crud.create_enrollment(db, current_user.id, data)
 
 
 if __name__ == "__main__":

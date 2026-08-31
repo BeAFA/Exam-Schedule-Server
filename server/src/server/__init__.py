@@ -2,15 +2,12 @@ import json
 import re
 from pathlib import Path
 from datetime import datetime
-
 from sqlalchemy import create_engine, Integer, DateTime, func, Boolean, MetaData
 from sqlalchemy.orm import sessionmaker, DeclarativeBase, Mapped, mapped_column
 from fastapi import FastAPI
-
 import cloudinary
 import cloudinary.uploader
 import cloudinary.api
-
 
 cloudinary.config(secure=True)
 
@@ -41,6 +38,7 @@ def uploadImage(file):
     result = cloudinary.uploader.upload(file)
     return result["secure_url"]
 
+
 def extract_public_id(img_url: str) -> str | None:
     match = re.search(r"/upload/(?:v\d+/)?(.+)\.\w+$", img_url)
     return match.group(1) if match else None
@@ -52,6 +50,7 @@ def destroyImage(img_url: str) -> bool:
         return False
     result = cloudinary.uploader.destroy(public_id)
     return result.get("result") == "ok"
+
 
 engine = create_engine(
     DATABASE_URL,

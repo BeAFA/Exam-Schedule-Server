@@ -8,13 +8,7 @@ CONSTRAINT_MESSAGES: dict[str, str] = {
     "uq_class_session_number": "Lớp học phần này đã bị đụng lịch học",
     "uq_subject_class_weekday_session":"Lớp học phần này đã trùng lịch học trong tuần",
     "uq_exam_teacher": "Giảng viên đã được phân công coi ca thi này rồi.",
-    "uq_exam_student": "Sinh viên đã đăng ký ca thi này rồi.",
-    "uq_exam_seat": "Số ghế này đã có người ngồi trong ca thi.",
-    "uq_student_subject_class": "Bạn đã đăng ký lớp học phần này trong học kỳ/năm học này rồi.",
     "uq_subject_class_teacher": "Lớp học phần này đã được phân công giảng viên rồi.",
-    "uq_users_email": "Email này đã được sử dụng.",
-    "uq_users_user_code": "Mã người dùng này đã tồn tại.",
-    "uq_subjects_subject_code": "Mã môn học này đã tồn tại.",
 }
 
 DEFAULT_MESSAGE = "Dữ liệu bị trùng lặp hoặc vi phạm ràng buộc dữ liệu, vui lòng kiểm tra lại."

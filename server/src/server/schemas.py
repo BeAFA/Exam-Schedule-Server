@@ -1,22 +1,12 @@
 import re
-from datetime import datetime, date
-from typing import Optional
-
-from pydantic import BaseModel, EmailStr, ConfigDict, field_validator, Field
-from typing_extensions import Annotated
+from datetime import date
+from pydantic import BaseModel, EmailStr, ConfigDict, field_validator, conlist
 from server.models import (
     Semester, ClassStatus, Weekday, SessionEN,
-    TypeOfExam, TimeFrame, ExamStatus, UserRole, AttendanceStatus
+    TypeOfExam, TimeFrame, ExamStatus, UserRole
 )
 
 # ================= USER =================
-class UserCreate(BaseModel):
-    first_name: str
-    last_name: str
-    email: EmailStr
-    password: Annotated[str, Field(min_length=8)]
-
-
 class UserLogin(BaseModel):
     email: EmailStr
     password: str
@@ -34,12 +24,6 @@ class UserOut(BaseModel):
 
 
 # ================= SUBJECT =================
-class SubjectCreate(BaseModel):
-    subject_code: str
-    name: str
-    credits: int
-
-
 class SubjectOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: int
@@ -134,18 +118,6 @@ class SubjectClassWithScheduleOut(BaseModel):
     schedules: list[ScheduleOut]
 
 
-# ================= CLASS SESSION =================
-class ClassSessionOut(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-    id: int
-    subject_class_id: int
-    schedule_id: int
-    session_number: int
-    session_date: date
-    room_id: int
-    weekday: Weekday
-    session: SessionEN
-
 
 # ================= TEACHING ASSIGNMENT =================
 class TeachingAssignmentCreate(BaseModel):
@@ -200,33 +172,10 @@ class ExamInvigilatorOut(BaseModel):
     exam_id: int
     teacher_id: int
 
+# ================= EXAM INVIGILATOR =================
+class ChangeActiveIn(BaseModel):
+    ids: conlist(int, min_items=1)
 
-# ================= EXAM REGISTRATION =================
-class ExamRegistrationCreate(BaseModel):
-    exam_id: int
-    student_id: int
-    seat_number: str
-
-
-class ExamRegistrationOut(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
+class ChangeActiveOut(BaseModel):
     id: int
-    exam_id: int
-    student_id: int
-    seat_number: str
-    attendance_status: AttendanceStatus
-    score: Optional[float] = None
-
-
-# ================= ENROLLMENT =================
-class EnrollmentCreate(BaseModel):
-    subject_class_id: int
-
-
-class EnrollmentOut(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-    id: int
-    student_id: int
-    subject_class_id: int
-    registered_at: datetime
-    final_score: Optional[float] = None
+    is_active: bool

@@ -1,17 +1,16 @@
 from enum import Enum
-from datetime import datetime, date, timedelta, timezone
-
+from datetime import datetime, date, timedelta
 import cloudinary
 from werkzeug.security import generate_password_hash, check_password_hash
 from sqlalchemy import (
-    Integer, String, DateTime, Float,
+    Integer, String, DateTime,
     Enum as SQLEnum, ForeignKey, UniqueConstraint, Date, select
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship, Session
-
 from server import Base, Classify
 
-DEFAULT_AVATAR_URL="https://res.cloudinary.com/qrmh4zb7/image/upload/w5wu4duozmvf2klosgld.png"
+DEFAULT_AVATAR_URL = "https://res.cloudinary.com/qrmh4zb7/image/upload/w5wu4duozmvf2klosgld.png"
+
 
 # ================= ENUMS =================
 class UserRole(Enum):
@@ -39,13 +38,6 @@ class Semester(Enum):
     Semester_3 = "Semester 3"
 
 
-class AttendanceStatus(Enum):
-    NOT_MARKED = "NOT_MARKED"
-    PRESENT = "PRESENT"
-    ABSENT = "ABSENT"
-    EXCUSED = "EXCUSED"
-
-
 class ClassStatus(Enum):
     OPEN = "OPEN"
     CLOSED = "CLOSED"
@@ -67,6 +59,7 @@ class Weekday(Enum):
     SAT = "SAT"
     SUN = "SUN"
 
+
 WEEKDAY_TO_PYTHON = {
     Weekday.MON: 0,
     Weekday.TUE: 1,
@@ -81,6 +74,7 @@ WEEKDAY_TO_PYTHON = {
 class SessionEN(Enum):
     MORNING = "MORNING"
     AFTERNOON = "AFTERNOON"
+
 
 SESSION_ORDER = {
     SessionEN.MORNING: 1,
@@ -101,10 +95,8 @@ class User(Base, Classify):
     role: Mapped[UserRole] = mapped_column(SQLEnum(UserRole), nullable=False, default=UserRole.STUDENT)
 
     # relationships
-    enrollments: Mapped[list["Enrollment"]] = relationship(back_populates="student")
     teaching_assignments: Mapped[list["TeachingAssignment"]] = relationship(back_populates="teacher")
     invigilations: Mapped[list["ExamInvigilator"]] = relationship(back_populates="teacher")
-    exam_registrations: Mapped[list["ExamRegistration"]] = relationship(back_populates="student")
 
     def set_password(self, password: str):
         self.password = generate_password_hash(password)
@@ -138,15 +130,15 @@ class SubjectClass(Base, Classify):
     max_students: Mapped[int] = mapped_column(Integer, nullable=False)
 
     subject: Mapped["Subject"] = relationship(back_populates="classes")
-    enrollments: Mapped[list["Enrollment"]] = relationship(back_populates="subject_class")
     teaching_assignments: Mapped[list["TeachingAssignment"]] = relationship(back_populates="subject_class")
     exams: Mapped[list["Exam"]] = relationship(back_populates="subject_class")
     schedules: Mapped[list["Schedule"]] = relationship(back_populates="subject_class", cascade="all, delete-orphan")
-    class_sessions: Mapped[list["ClassSession"]] = relationship(back_populates="subject_class", cascade="all, delete-orphan")
+    class_sessions: Mapped[list["ClassSession"]] = relationship(back_populates="subject_class",
+                                                                cascade="all, delete-orphan")
 
-    __table_args__ = (
-        UniqueConstraint("subject_id", "subject_class_name", "semester", "academic_year", name="uq_class_identity"),
-    )
+        # __table_args__ = (
+        #     UniqueConstraint("subject_id", "subject_class_name", "semester", "academic_year", name="uq_class_identity"),
+        # )
 
 
 # ================= ROOM =================
@@ -172,22 +164,23 @@ class Schedule(Base, Classify):
 
     subject_class: Mapped["SubjectClass"] = relationship(back_populates="schedules")
     room: Mapped["Room"] = relationship(back_populates="schedules")
-    class_sessions: Mapped[list["ClassSession"]] = relationship(back_populates="schedule", cascade="all, delete-orphan",)
+    class_sessions: Mapped[list["ClassSession"]] = relationship(back_populates="schedule",
+                                                                cascade="all, delete-orphan", )
 
     __table_args__ = (
         UniqueConstraint("subject_class_id", "weekday", "session", name="uq_subject_class_weekday_session"),
     )
+
 
 # ============================================================
 # CREATE SCHEDULES + GENERATE CLASS SESSIONS
 # ============================================================
 
 def create_schedules_and_sessions(
-    db: Session,
-    subject_class: SubjectClass,
-    schedule_data: list[dict],
+        db: Session,
+        subject_class: SubjectClass,
+        schedule_data: list[dict],
 ) -> list[Schedule]:
-
     if not schedule_data:
         raise ValueError("Phải có ít nhất một Schedule.")
 
@@ -236,6 +229,7 @@ def create_schedules_and_sessions(
 
     return schedules
 
+
 # ================= Class Session =================
 class ClassSession(Base, Classify):
     __tablename__ = "class_sessions"
@@ -256,16 +250,16 @@ class ClassSession(Base, Classify):
         UniqueConstraint("subject_class_id", "session_number", name="uq_class_session_number"),
     )
 
+
 # ============================================================
 # CLASS SESSION GENERATION
 # ============================================================
 
 def generate_class_sessions(
-    db: Session,
-    subject_class: SubjectClass,
-    schedules: list[Schedule] | None = None,
+        db: Session,
+        subject_class: SubjectClass,
+        schedules: list[Schedule] | None = None,
 ) -> list[ClassSession]:
-
     # ========================================================
     # VALIDATE
     # ========================================================
@@ -352,8 +346,8 @@ def generate_class_sessions(
     days_checked = 0
 
     while (
-        session_number <= subject_class.number_of_sessions
-        and days_checked <= max_days
+            session_number <= subject_class.number_of_sessions
+            and days_checked <= max_days
     ):
 
         # ----------------------------------------------------
@@ -399,10 +393,6 @@ def generate_class_sessions(
         current_date += timedelta(days=1)
         days_checked += 1
 
-    # ========================================================
-    # KHÔNG SINH ĐỦ SESSION
-    # ========================================================
-
     if session_number <= subject_class.number_of_sessions:
         raise ValueError(
             "Không thể sinh đủ ClassSession. "
@@ -429,12 +419,11 @@ class Exam(Base, Classify):
     subject_class: Mapped["SubjectClass"] = relationship(back_populates="exams")
     room: Mapped["Room"] = relationship(back_populates="exams")
     invigilators: Mapped[list["ExamInvigilator"]] = relationship(back_populates="exam")
-    registrations: Mapped[list["ExamRegistration"]] = relationship(back_populates="exam")
 
-    __table_args__ = (
-        # Không cho xếp trùng phòng + trùng giờ + trùng ngày thi
-        UniqueConstraint("room_id", "exam_date", "time_frame", name="uq_room_datetime"),
-    )
+    # __table_args__ = (
+    #     # Không cho xếp trùng phòng + trùng giờ + trùng ngày thi
+    #     UniqueConstraint("room_id", "exam_date", "time_frame", name="uq_room_datetime"),
+    # )
 
 
 # ================= EXAM - INVIGILATOR =================
@@ -452,45 +441,6 @@ class ExamInvigilator(Base, Classify):
     )
 
 
-# ================= EXAM - REGISTRATION =================
-class ExamRegistration(Base, Classify):
-    __tablename__ = "exam_registrations"
-
-    exam_id: Mapped[int] = mapped_column(ForeignKey(Exam.id), nullable=False)
-    student_id: Mapped[int] = mapped_column(ForeignKey(User.id), nullable=False)
-    seat_number: Mapped[str] = mapped_column(String(10), nullable=False, comment="VD: A01, A02")
-    attendance_status: Mapped[AttendanceStatus] = mapped_column(
-        SQLEnum(AttendanceStatus), nullable=False, default=AttendanceStatus.NOT_MARKED
-    )
-    score: Mapped[float] = mapped_column(Float, nullable=True)
-
-    exam: Mapped["Exam"] = relationship(back_populates="registrations")
-    student: Mapped["User"] = relationship(back_populates="exam_registrations")
-
-    __table_args__ = (
-        UniqueConstraint("exam_id", "student_id", name="uq_exam_student"),
-        UniqueConstraint("exam_id", "seat_number", name="uq_exam_seat"),
-    )
-
-
-# ================= ENROLLMENT (đăng ký học phần) =================
-class Enrollment(Base, Classify):
-    __tablename__ = "enrollments"
-
-    student_id: Mapped[int] = mapped_column(ForeignKey(User.id), nullable=False)
-    subject_class_id: Mapped[int] = mapped_column(ForeignKey(SubjectClass.id), nullable=False)
-    registered_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.now(timezone.utc))
-    final_score: Mapped[float] = mapped_column(Float, nullable=True,
-                                               comment="Điểm tổng kết môn (sau khi có điểm giữa kỳ + cuối kỳ)")
-
-    student: Mapped["User"] = relationship(back_populates="enrollments")
-    subject_class: Mapped["SubjectClass"] = relationship(back_populates="enrollments")
-
-    __table_args__ = (
-        UniqueConstraint("student_id", "subject_class_id", name="uq_student_subject_class"),
-    )
-
-
 # ================= TEACHING - ASSIGNMENT =================
 class TeachingAssignment(Base, Classify):
     __tablename__ = "teaching_assignments"
@@ -505,18 +455,10 @@ class TeachingAssignment(Base, Classify):
         UniqueConstraint("subject_class_id", name="uq_subject_class_teacher"),
     )
 
+
 # ================= TOKEN BLACKLIST =================
 class TokenBlacklist(Base):
     __tablename__ = "token_blacklist"
 
     jti: Mapped[str] = mapped_column(String(255), primary_key=True, index=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-
-if __name__ == "__main__":
-    result = cloudinary.uploader.upload(
-        "assets/default_avatar.png",
-        public_id="avatar/default",
-        overwrite=True
-    )
-
-    print(result["secure_url"])
