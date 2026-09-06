@@ -1,5 +1,6 @@
 import json
 import re
+from contextlib import asynccontextmanager
 from pathlib import Path
 from datetime import datetime
 from sqlalchemy import create_engine, Integer, DateTime, func, Boolean, MetaData
@@ -97,4 +98,13 @@ def get_db():
         db.close()
 
 
-app = FastAPI(title="Hệ thống quản lý lịch thi")
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    from server.daily_task import start_scheduler, scheduler
+    start_scheduler()
+
+    yield
+
+    scheduler.shutdown()
+
+app = FastAPI(title="Hệ thống quản lý lớp học phần và lịch thi", lifespan=lifespan)

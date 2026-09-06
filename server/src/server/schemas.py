@@ -6,6 +6,7 @@ from server.models import (
     TypeOfExam, TimeFrame, ExamStatus, UserRole
 )
 
+
 # ================= USER =================
 class UserLogin(BaseModel):
     email: EmailStr
@@ -111,12 +112,12 @@ class SubjectClassOut(BaseModel):
     number_of_sessions: int
     status: ClassStatus
     max_students: int
+    is_active: bool
 
 
 class SubjectClassWithScheduleOut(BaseModel):
     subject_class: SubjectClassOut
     schedules: list[ScheduleOut]
-
 
 
 # ================= TEACHING ASSIGNMENT =================
@@ -128,6 +129,7 @@ class TeachingAssignmentCreate(BaseModel):
 class TeachingAssignmentOut(TeachingAssignmentCreate):
     model_config = ConfigDict(from_attributes=True)
     id: int
+    is_active: bool
 
 
 # ================= EXAM =================
@@ -138,12 +140,14 @@ class ExamBase(BaseModel):
     time_frame: TimeFrame
     duration: int
 
+
 class ExamCreate(ExamBase):
     subject_class_id: int
 
 
 class ExamUpdate(ExamBase):
     status: ExamStatus
+
 
 class ExamOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -155,15 +159,13 @@ class ExamOut(BaseModel):
     time_frame: TimeFrame
     duration: int
     status: ExamStatus
+    is_active: bool
 
 
 # ================= EXAM INVIGILATOR =================
 class ExamInvigilatorCreate(BaseModel):
     exam_id: int
-    teacher_id: int
-
-class ExamInvigilatorUpdate(BaseModel):
-    teacher_id: int
+    teacher_ids: conlist(int, min_length=1)
 
 
 class ExamInvigilatorOut(BaseModel):
@@ -171,10 +173,14 @@ class ExamInvigilatorOut(BaseModel):
     id: int
     exam_id: int
     teacher_id: int
+    is_active: bool
 
-# ================= EXAM INVIGILATOR =================
+
+# ================= CHANGE ACTIVE STATUS =================
 class ChangeActiveIn(BaseModel):
-    ids: conlist(int, min_items=1)
+    ids: conlist(int, min_length=1)
+    is_active: bool
+
 
 class ChangeActiveOut(BaseModel):
     id: int

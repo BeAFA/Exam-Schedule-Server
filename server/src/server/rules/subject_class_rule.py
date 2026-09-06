@@ -5,7 +5,6 @@ def check_subject_class_identity_conflict(
     db, subject_id, subject_class_name, semester, academic_year,
     exclude_subject_class_id: int | None = None,
 ) -> bool:
-    """Thay thế uq_class_identity — chỉ tính các lớp đang is_active=True."""
     query = db.query(SubjectClass.id).filter(
         SubjectClass.subject_id == subject_id,
         SubjectClass.subject_class_name == subject_class_name,

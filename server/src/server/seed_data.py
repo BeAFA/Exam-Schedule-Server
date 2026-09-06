@@ -166,14 +166,14 @@ def seed():
         # ================= EXAM =================
         exams_data = [
             # (class_index, room_name, exam_date, type, time_frame, duration)
-            (0, "A101", date(2025, 10, 15), TypeOfExam.MIDTERM, TimeFrame.SHIFT_1, 60),
+            (0, "A101", date(2025, 12, 9),  TypeOfExam.MIDTERM,   TimeFrame.SHIFT_1, 60),
             (0, "A101", date(2025, 12, 20), TypeOfExam.FINALTEST, TimeFrame.SHIFT_1, 90),
-            (1, "A102", date(2025, 10, 16), TypeOfExam.MIDTERM, TimeFrame.SHIFT_2, 60),
+            (1, "A102", date(2025, 12, 9),  TypeOfExam.MIDTERM,   TimeFrame.SHIFT_2, 60),
             (2, "B201", date(2025, 12, 21), TypeOfExam.FINALTEST, TimeFrame.SHIFT_1, 90),
             (3, "B202", date(2025, 12, 21), TypeOfExam.FINALTEST, TimeFrame.SHIFT_2, 90),
-            (4, "C301", date(2025, 10, 17), TypeOfExam.MIDTERM, TimeFrame.SHIFT_3, 60),
-            (5, "A101", date(2026, 3, 10), TypeOfExam.MIDTERM, TimeFrame.SHIFT_1, 60),
-            (6, "A102", date(2026, 5, 15), TypeOfExam.FINALTEST, TimeFrame.SHIFT_2, 90),
+            (4, "C301", date(2025, 12, 11), TypeOfExam.MIDTERM,   TimeFrame.SHIFT_3, 60),
+            (5, "A101", date(2026, 5, 16),  TypeOfExam.MIDTERM,   TimeFrame.SHIFT_1, 60),
+            (6, "A102", date(2026, 5, 20),  TypeOfExam.FINALTEST, TimeFrame.SHIFT_2, 90),
         ]
         exams = []
         for class_idx, room_name, exam_date, etype, tframe, duration in exams_data:

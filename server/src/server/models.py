@@ -1,6 +1,5 @@
 from enum import Enum
 from datetime import datetime, date, timedelta
-import cloudinary
 from werkzeug.security import generate_password_hash, check_password_hash
 from sqlalchemy import (
     Integer, String, DateTime,
@@ -96,7 +95,7 @@ class User(Base, Classify):
 
     # relationships
     teaching_assignments: Mapped[list["TeachingAssignment"]] = relationship(back_populates="teacher")
-    invigilations: Mapped[list["ExamInvigilator"]] = relationship(back_populates="teacher")
+    invigilators: Mapped[list["ExamInvigilator"]] = relationship(back_populates="teacher")
 
     def set_password(self, password: str):
         self.password = generate_password_hash(password)
@@ -118,7 +117,7 @@ class Subject(Base, Classify):
 
 # ================= SUBJECT - CLASS =================
 class SubjectClass(Base, Classify):
-    __tablename__ = "class_rooms"
+    __tablename__ = "subject_classes"
 
     subject_class_name: Mapped[str] = mapped_column(String(100), nullable=False)
     subject_id: Mapped[int] = mapped_column(ForeignKey(Subject.id), nullable=False)
@@ -135,10 +134,6 @@ class SubjectClass(Base, Classify):
     schedules: Mapped[list["Schedule"]] = relationship(back_populates="subject_class", cascade="all, delete-orphan")
     class_sessions: Mapped[list["ClassSession"]] = relationship(back_populates="subject_class",
                                                                 cascade="all, delete-orphan")
-
-        # __table_args__ = (
-        #     UniqueConstraint("subject_id", "subject_class_name", "semester", "academic_year", name="uq_class_identity"),
-        # )
 
 
 # ================= ROOM =================
@@ -172,10 +167,6 @@ class Schedule(Base, Classify):
     )
 
 
-# ============================================================
-# CREATE SCHEDULES + GENERATE CLASS SESSIONS
-# ============================================================
-
 def create_schedules_and_sessions(
         db: Session,
         subject_class: SubjectClass,
@@ -191,7 +182,6 @@ def create_schedules_and_sessions(
         session = data["session"]
 
         key = (weekday, session)
-
         if key in seen:
             raise ValueError(
                 f"Schedule bị trùng "
@@ -215,7 +205,6 @@ def create_schedules_and_sessions(
 
     db.flush()
 
-    # Lấy TOÀN BỘ schedule của SubjectClass
     all_schedules = db.scalars(
         select(Schedule)
         .where(Schedule.subject_class_id == subject_class.id)
@@ -251,29 +240,83 @@ class ClassSession(Base, Classify):
     )
 
 
-# ============================================================
-# CLASS SESSION GENERATION
-# ============================================================
+def build_candidate_class_sessions(
+        start_date: date,
+        number_of_sessions: int,
+        schedule_items: list[dict],
+) -> list[dict]:
+    if number_of_sessions <= 0:
+        raise ValueError("number_of_sessions phải lớn hơn 0.")
+
+    if start_date is None:
+        raise ValueError("Phải có start_date.")
+
+    if not schedule_items:
+        raise ValueError("Phải có ít nhất một Schedule.")
+
+    valid_items: list[dict] = []
+    seen: set[tuple[Weekday, SessionEN]] = set()
+
+    for item in schedule_items:
+        key = (item["weekday"], item["session"])
+        if key in seen:
+            raise ValueError(
+                f"Schedule bị trùng "
+                f"{item['weekday'].value} - {item['session'].value}."
+            )
+        seen.add(key)
+        valid_items.append(item)
+
+    valid_items.sort(
+        key=lambda it: (
+            WEEKDAY_TO_PYTHON[it["weekday"]],
+            SESSION_ORDER[it["session"]],
+        )
+    )
+
+    candidates: list[dict] = []
+    current_date = start_date
+    session_number = 1
+    max_days = max(number_of_sessions * 14, 30)
+    days_checked = 0
+
+    while session_number <= number_of_sessions and days_checked <= max_days:
+
+        for item in valid_items:
+            target_weekday = WEEKDAY_TO_PYTHON[item["weekday"]]
+
+            if current_date.weekday() != target_weekday:
+                continue
+
+            candidates.append({
+                "session_date": current_date,
+                "room_id": item["room_id"],
+                "weekday": item["weekday"],
+                "session": item["session"],
+            })
+
+            session_number += 1
+
+            if session_number > number_of_sessions:
+                break
+
+        current_date += timedelta(days=1)
+        days_checked += 1
+
+    if session_number <= number_of_sessions:
+        raise ValueError(
+            "Không thể sinh đủ buổi học dự kiến. "
+            "Kiểm tra start_date và Schedule."
+        )
+
+    return candidates
+
 
 def generate_class_sessions(
         db: Session,
         subject_class: SubjectClass,
         schedules: list[Schedule] | None = None,
 ) -> list[ClassSession]:
-    # ========================================================
-    # VALIDATE
-    # ========================================================
-
-    if subject_class.number_of_sessions <= 0:
-        raise ValueError(
-            "number_of_sessions phải lớn hơn 0."
-        )
-
-    if subject_class.start_date is None:
-        raise ValueError(
-            "SubjectClass phải có start_date."
-        )
-
     schedules = (
         schedules
         if schedules is not None
@@ -285,119 +328,47 @@ def generate_class_sessions(
             "SubjectClass chưa có Schedule."
         )
 
-    # ========================================================
-    # KIỂM TRA SCHEDULE
-    # ========================================================
-
-    valid_schedules: list[Schedule] = []
-
-    seen: set[tuple[Weekday, SessionEN]] = set()
-
     for schedule in schedules:
         if schedule.subject_class_id != subject_class.id:
             raise ValueError(
                 "Schedule không thuộc SubjectClass này."
             )
 
-        key = (
-            schedule.weekday,
-            schedule.session,
-        )
+    schedule_items = [
+        {"room_id": s.room_id, "weekday": s.weekday, "session": s.session}
+        for s in schedules
+    ]
 
-        if key in seen:
-            raise ValueError(
-                f"Schedule bị trùng "
-                f"{schedule.weekday.value} - "
-                f"{schedule.session.value}."
-            )
-
-        seen.add(key)
-        valid_schedules.append(schedule)
-    valid_schedules.sort(
-        key=lambda sch: (
-            WEEKDAY_TO_PYTHON[sch.weekday],
-            SESSION_ORDER[sch.session],
-        )
+    candidates = build_candidate_class_sessions(
+        start_date=subject_class.start_date,
+        number_of_sessions=subject_class.number_of_sessions,
+        schedule_items=schedule_items,
     )
 
-    # ========================================================
-    # XÓA CLASS SESSION CŨ
-    # ========================================================
+    schedule_by_key = {(s.weekday, s.session): s for s in schedules}
 
     for class_session in list(subject_class.class_sessions):
         db.delete(class_session)
 
     db.flush()
 
-    # ========================================================
-    # SINH CLASS SESSION
-    # ========================================================
-
     sessions: list[ClassSession] = []
 
-    current_date = subject_class.start_date
-    session_number = 1
+    for session_number, candidate in enumerate(candidates, start=1):
+        schedule = schedule_by_key[(candidate["weekday"], candidate["session"])]
 
-    max_days = max(
-        subject_class.number_of_sessions * 14,
-        30,
-    )
-
-    days_checked = 0
-
-    while (
-            session_number <= subject_class.number_of_sessions
-            and days_checked <= max_days
-    ):
-
-        # ----------------------------------------------------
-        # Tìm Schedule phù hợp với ngày hiện tại
-        # ----------------------------------------------------
-
-        for schedule in valid_schedules:
-
-            target_weekday = WEEKDAY_TO_PYTHON[
-                schedule.weekday
-            ]
-
-            if current_date.weekday() != target_weekday:
-                continue
-
-            # ------------------------------------------------
-            # Tạo ClassSession
-            # ------------------------------------------------
-
-            class_session = ClassSession(
-                subject_class_id=subject_class.id,
-
-                schedule_id=schedule.id,
-
-                session_number=session_number,
-
-                session_date=current_date,
-
-                # Snapshot Schedule
-                room_id=schedule.room_id,
-                weekday=schedule.weekday,
-                session=schedule.session,
-            )
-
-            db.add(class_session)
-            sessions.append(class_session)
-
-            session_number += 1
-
-            if session_number > subject_class.number_of_sessions:
-                break
-
-        current_date += timedelta(days=1)
-        days_checked += 1
-
-    if session_number <= subject_class.number_of_sessions:
-        raise ValueError(
-            "Không thể sinh đủ ClassSession. "
-            "Kiểm tra start_date và Schedule của SubjectClass."
+        class_session = ClassSession(
+            subject_class_id=subject_class.id,
+            schedule_id=schedule.id,
+            session_number=session_number,
+            session_date=candidate["session_date"],
+            room_id=candidate["room_id"],
+            weekday=candidate["weekday"],
+            session=candidate["session"],
         )
+
+        db.add(class_session)
+        sessions.append(class_session)
 
     db.flush()
 
@@ -418,12 +389,7 @@ class Exam(Base, Classify):
 
     subject_class: Mapped["SubjectClass"] = relationship(back_populates="exams")
     room: Mapped["Room"] = relationship(back_populates="exams")
-    invigilators: Mapped[list["ExamInvigilator"]] = relationship(back_populates="exam")
-
-    # __table_args__ = (
-    #     # Không cho xếp trùng phòng + trùng giờ + trùng ngày thi
-    #     UniqueConstraint("room_id", "exam_date", "time_frame", name="uq_room_datetime"),
-    # )
+    invigilators: Mapped[list["ExamInvigilator"]] = relationship(back_populates="exam", cascade="all, delete-orphan")
 
 
 # ================= EXAM - INVIGILATOR =================
@@ -434,7 +400,7 @@ class ExamInvigilator(Base, Classify):
     teacher_id: Mapped[int] = mapped_column(ForeignKey(User.id), nullable=False)
 
     exam: Mapped["Exam"] = relationship(back_populates="invigilators")
-    teacher: Mapped["User"] = relationship(back_populates="invigilations")
+    teacher: Mapped["User"] = relationship(back_populates="invigilators")
 
     __table_args__ = (
         UniqueConstraint("exam_id", "teacher_id", name="uq_exam_teacher"),

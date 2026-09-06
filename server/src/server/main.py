@@ -124,14 +124,15 @@ async def update_subject_class(
         schedules=[schemas.ScheduleOut.model_validate(s) for s in schedules],
     )
 
-@app.post("/subject_class/s_delete", response_model=list[schemas.ChangeActiveOut],
+
+@app.post("/subject_class/change_active", response_model=list[schemas.ChangeActiveOut],
           status_code=status.HTTP_200_OK)
 def change_subject_class_active(
         data: schemas.ChangeActiveIn,
         current_user=Depends(require_role(UserRole.ADMIN)),
         db: Session = Depends(get_db),
 ):
-    subject_classes = crud.change_subject_class_active(db, data.ids)
+    subject_classes = crud.change_subject_class_active(db, data.ids, data.is_active)
     return [
         schemas.ChangeActiveOut(id=sc.id, is_active=sc.is_active)
         for sc in subject_classes
@@ -171,7 +172,7 @@ def create_teaching_assignment(
         current_user=Depends(require_role(UserRole.ADMIN)),
         db: Session = Depends(get_db)
 ):
-    teaching_assignment = crud.create_teacher_assignment(db, data)
+    teaching_assignment = crud.create_teaching_assignment(db, data)
     return schemas.TeachingAssignmentOut.model_validate(teaching_assignment)
 
 
@@ -220,13 +221,14 @@ def update_exam(
     exam = crud.update_exam(db, data, exam_id)
     return schemas.ExamOut.model_validate(exam)
 
-@app.post("/exam/s_delete", response_model=list[schemas.ChangeActiveOut], status_code=status.HTTP_200_OK)
+
+@app.post("/exam/change_active", response_model=list[schemas.ChangeActiveOut], status_code=status.HTTP_200_OK)
 def change_exam_active(
         data: schemas.ChangeActiveIn,
         current_user=Depends(require_role(UserRole.ADMIN)),
         db: Session = Depends(get_db),
 ):
-    exams = crud.change_exam_active(db, data.ids)
+    exams = crud.change_exam_active(db, data.ids, data.is_active)
     return [
         schemas.ChangeActiveOut(id=e.id, is_active=e.is_active)
         for e in exams
@@ -242,24 +244,17 @@ def get_exam_invigilator(
     return crud.get_all_exam_invigilator(db, exam_id)
 
 
-@app.post("/exam_invigilator/create", response_model=schemas.ExamInvigilatorOut, status_code=status.HTTP_201_CREATED)
-def create_exam_invigilator(
+@app.post(
+    "/exam_invigilator/set",
+    response_model=list[schemas.ExamInvigilatorOut],
+    status_code=status.HTTP_201_CREATED
+)
+def set_exam_invigilators(
         data: schemas.ExamInvigilatorCreate,
         current_user=Depends(require_role(UserRole.ADMIN)),
         db: Session = Depends(get_db),
 ):
-    return crud.create_exam_invigilator(db, data)
-
-
-@app.post("/exam_invigilator/{exam_invigilator_id}/update", response_model=schemas.ExamInvigilatorOut,
-          status_code=status.HTTP_200_OK)
-def update_exam_invigilator(
-        exam_invigilator_id: int,
-        data: schemas.ExamInvigilatorUpdate,
-        current_user=Depends(require_role(UserRole.ADMIN)),
-        db: Session = Depends(get_db),
-):
-    return crud.update_exam_invigilator(db, data, exam_invigilator_id)
+    return crud.set_exam_invigilators(db, data)
 
 
 if __name__ == "__main__":

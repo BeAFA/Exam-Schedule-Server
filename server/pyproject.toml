@@ -9,6 +9,7 @@ authors = [
 requires-python = ">=3.14"
 dependencies = [
     "alembic>=1.18.5",
+    "apscheduler>=3.11.3",
     "cloudinary>=1.45.0",
     "cryptography>=50.0.0",
     "fastapi[standard]>=0.141.1",
@@ -16,6 +17,7 @@ dependencies = [
     "pymysql>=1.2.0",
     "python-dotenv>=1.2.2",
     "python-jose[cryptography]>=3.5.0",
+    "spglib>=2.7.0",
     "sqlalchemy>=2.0.51",
     "werkzeug>=3.1.8",
 ]
