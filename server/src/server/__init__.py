@@ -1,9 +1,16 @@
 import json
+import re
+from contextlib import asynccontextmanager
 from pathlib import Path
 from datetime import datetime
 from sqlalchemy import create_engine, Integer, DateTime, func, Boolean, MetaData
 from sqlalchemy.orm import sessionmaker, DeclarativeBase, Mapped, mapped_column
 from fastapi import FastAPI
+import cloudinary
+import cloudinary.uploader
+import cloudinary.api
+
+cloudinary.config(secure=True)
 
 BASE_DIR = Path(__file__).resolve().parent
 CREDENTIALS_PATH = BASE_DIR / "credentials" / "database.json"
@@ -17,6 +24,35 @@ except FileNotFoundError:
 except KeyError:
     raise RuntimeError("File database.json thiếu key 'DATABASE_URL'")
 
+CLOUDINARY_API_KEY = config["CLOUDINARY_API_KEY"]
+CLOUDINARY_API_SECRET = config["CLOUDINARY_API_SECRET"]
+CLOUDINARY_CLOUD_NAME = config["CLOUDINARY_CLOUD_NAME"]
+
+cloudinary.config(
+    cloud_name=config["CLOUDINARY_CLOUD_NAME"],
+    api_key=config["CLOUDINARY_API_KEY"],
+    api_secret=config["CLOUDINARY_API_SECRET"],
+)
+
+
+def uploadImage(file):
+    result = cloudinary.uploader.upload(file)
+    return result["secure_url"]
+
+
+def extract_public_id(img_url: str) -> str | None:
+    match = re.search(r"/upload/(?:v\d+/)?(.+)\.\w+$", img_url)
+    return match.group(1) if match else None
+
+
+def destroyImage(img_url: str) -> bool:
+    public_id = extract_public_id(img_url)
+    if not public_id:
+        return False
+    result = cloudinary.uploader.destroy(public_id)
+    return result.get("result") == "ok"
+
+
 engine = create_engine(
     DATABASE_URL,
     pool_size=10,
@@ -24,6 +60,9 @@ engine = create_engine(
     pool_timeout=30,
     pool_recycle=1800,
     pool_pre_ping=True,
+    connect_args={
+        "init_command": "SET SESSION innodb_lock_wait_timeout = 5"
+    },
     echo=config.get("DEBUG", False),
 )
 
@@ -36,6 +75,7 @@ naming_convention = {
     "fk": "fk_%(table_name)s_%(column_0_name)s_%(referred_table_name)s",
     "pk": "pk_%(table_name)s",
 }
+
 
 class Base(DeclarativeBase):
     metadata = MetaData(naming_convention=naming_convention)
@@ -51,12 +91,20 @@ def get_db():
     db = SessionLocal()
     try:
         yield db
+    except Exception:
+        db.rollback()
+        raise
     finally:
         db.close()
 
 
-app = FastAPI(title="Hệ thống quản lý lịch thi")
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    from server.daily_task import start_scheduler, scheduler
+    start_scheduler()
 
-def main():
-    import uvicorn
-    uvicorn.run("server.main:app", reload=True)
+    yield
+
+    scheduler.shutdown()
+
+app = FastAPI(title="Hệ thống quản lý lớp học phần và lịch thi", lifespan=lifespan)
