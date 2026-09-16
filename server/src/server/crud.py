@@ -171,22 +171,62 @@ def create_subject_class(db: Session, subject_class_data: SubjectClassCreate) ->
     return subject_class, schedules
 
 
-def update_subject_class(db: Session, subject_class_data: SubjectClassUpdate, subject_class_id: int) -> tuple[
-    SubjectClass, list[Schedule]]:
+def update_subject_class(
+        db: Session,
+        subject_class_data: SubjectClassUpdate,
+        subject_class_id: int,
+) -> tuple[SubjectClass, list[Schedule]]:
     subject_class = db.scalar(
-        select(SubjectClass).where(SubjectClass.id == subject_class_id).options(joinedload(SubjectClass.subject)))
+        select(SubjectClass)
+        .where(SubjectClass.id == subject_class_id)
+        .options(joinedload(SubjectClass.subject))
+    )
+
     if subject_class is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lớp học phần không tồn tại")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Lớp học phần không tồn tại",
+        )
 
-    if not subject_class_rule.check_max_students_positive(subject_class_data.max_students):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Sĩ số tối đa phải lớn hơn 0")
+    old_status = subject_class.status
+    new_status = subject_class_data.status
 
-    if not subject_class_rule.check_number_of_sessions_positive(subject_class_data.number_of_sessions):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Số buổi học phải lớn hơn 0")
+    if new_status != ClassStatus.OPEN:
+        subject_class.status = new_status
+
+        db.commit()
+        db.refresh(subject_class)
+
+        schedules = db.scalars(
+            select(Schedule)
+            .where(Schedule.subject_class_id == subject_class_id)
+            .options(joinedload(Schedule.room))
+        ).all()
+
+        return subject_class, schedules
+
+    if not subject_class_rule.check_max_students_positive(
+            subject_class_data.max_students
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Sĩ số tối đa phải lớn hơn 0",
+        )
+
+    if not subject_class_rule.check_number_of_sessions_positive(
+            subject_class_data.number_of_sessions
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Số buổi học phải lớn hơn 0",
+        )
 
     if subject_class_rule.check_subject_class_identity_conflict(
-            db, subject_class.subject_id, subject_class_data.subject_class_name,
-            subject_class_data.semester, subject_class_data.academic_year,
+            db,
+            subject_class.subject_id,
+            subject_class_data.subject_class_name,
+            subject_class_data.semester,
+            subject_class_data.academic_year,
             exclude_subject_class_id=subject_class_id,
     ):
         raise HTTPException(
@@ -204,9 +244,14 @@ def update_subject_class(db: Session, subject_class_data: SubjectClassUpdate, su
     )
 
     schedule_items = [
-        {"room_id": item.room_id, "weekday": item.weekday, "session": item.session}
+        {
+            "room_id": item.room_id,
+            "weekday": item.weekday,
+            "session": item.session,
+        }
         for item in subject_class_data.schedules
     ]
+
     candidate_sessions = build_candidate_class_sessions(
         start_date=subject_class_data.start_date,
         number_of_sessions=subject_class_data.number_of_sessions,
@@ -214,17 +259,25 @@ def update_subject_class(db: Session, subject_class_data: SubjectClassUpdate, su
     )
 
     if exam_rule.check_room_conflict_with_candidate_sessions(
-            db, candidate_sessions, exclude_subject_class_id=subject_class_id,
+            db,
+            candidate_sessions,
+            exclude_subject_class_id=subject_class_id,
     ):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Lịch học mới bị trùng phòng với lớp học phần hoặc buổi thi khác.",
         )
 
-    assignment = get_teaching_assignment_by_subject_class(db, subject_class_id)
+    assignment = get_teaching_assignment_by_subject_class(
+        db,
+        subject_class_id,
+    )
+
     if assignment:
         if teaching_rule.check_teacher_conflict_with_candidate_sessions(
-                db, assignment.teacher_id, candidate_sessions,
+                db,
+                assignment.teacher_id,
+                candidate_sessions,
                 exclude_subject_class_id=subject_class_id,
         ):
             raise HTTPException(
@@ -233,7 +286,10 @@ def update_subject_class(db: Session, subject_class_data: SubjectClassUpdate, su
             )
 
         if exam_rule.check_teacher_invigilation_conflict_with_candidate_sessions(
-                db, assignment.teacher_id, candidate_sessions,
+                db,
+                assignment.teacher_id,
+                candidate_sessions,
+                exclude_subject_class_id=subject_class_id,
         ):
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
@@ -241,7 +297,9 @@ def update_subject_class(db: Session, subject_class_data: SubjectClassUpdate, su
             )
 
     invalid_exams = exam_rule.get_exams_invalid_after_candidate_sessions(
-        db, subject_class_id, candidate_sessions,
+        db,
+        subject_class_id,
+        candidate_sessions,
     )
 
     subject_class.subject_class_name = subject_class_data.subject_class_name
@@ -250,13 +308,18 @@ def update_subject_class(db: Session, subject_class_data: SubjectClassUpdate, su
     subject_class.start_date = subject_class_data.start_date
     subject_class.number_of_sessions = subject_class_data.number_of_sessions
     subject_class.max_students = subject_class_data.max_students
-    subject_class.status = subject_class_data.status
+    subject_class.status = new_status
+
     db.flush()
 
-    old_schedules = db.scalars(select(Schedule).where(Schedule.subject_class_id == subject_class_id)).all()
+    old_schedules = db.scalars(
+        select(Schedule)
+        .where(Schedule.subject_class_id == subject_class_id)
+    ).all()
 
     for old_schedule in old_schedules:
         db.delete(old_schedule)
+
     db.flush()
 
     schedule_data = [
@@ -268,28 +331,42 @@ def update_subject_class(db: Session, subject_class_data: SubjectClassUpdate, su
         for item in subject_class_data.schedules
     ]
 
-    schedules = create_schedules_and_sessions(db, subject_class, schedule_data)
+    schedules = create_schedules_and_sessions(
+        db,
+        subject_class,
+        schedule_data,
+    )
 
     for exam in invalid_exams:
         _cascade_deactivate_exam(exam)
 
     db.commit()
     db.refresh(subject_class)
+
     for schedule in schedules:
         db.refresh(schedule)
 
     subject_class = db.scalar(
-        select(SubjectClass).where(SubjectClass.id == subject_class.id).options(joinedload(SubjectClass.subject))
+        select(SubjectClass)
+        .where(SubjectClass.id == subject_class.id)
+        .options(joinedload(SubjectClass.subject))
     )
+
     schedules = db.scalars(
-        select(Schedule).where(Schedule.subject_class_id == subject_class.id).options(joinedload(Schedule.room))
+        select(Schedule)
+        .where(Schedule.subject_class_id == subject_class.id)
+        .options(joinedload(Schedule.room))
     ).all()
 
     return subject_class, schedules
 
 
 def _cascade_deactivate_exam(exam: Exam) -> None:
+    if exam.status == ExamStatus.FINISHED:
+        return
+
     exam.is_active = False
+
     for inv in exam.invigilators:
         if inv.is_active:
             inv.is_active = False
