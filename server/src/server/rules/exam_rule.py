@@ -222,6 +222,7 @@ def check_room_conflict_with_candidate_sessions(
                 Exam.exam_date == session_date,
                 Exam.status != ExamStatus.CANCELLED,
                 Exam.is_active == True,
+                Exam.subject_class_id != exclude_subject_class_id,
             )
             .all()
         )
@@ -237,6 +238,7 @@ def check_teacher_invigilation_conflict_with_candidate_sessions(
         db: Session,
         teacher_id: int,
         candidate_sessions: list[dict],
+        exclude_subject_class_id: int = None,
 ) -> bool:
     invigilators = (
         db.query(Exam.exam_date, Exam.time_frame, Exam.duration)
@@ -246,6 +248,7 @@ def check_teacher_invigilation_conflict_with_candidate_sessions(
             ExamInvigilator.is_active == True,
             Exam.status != ExamStatus.CANCELLED,
             Exam.is_active == True,
+            Exam.subject_class_id != exclude_subject_class_id,
         )
         .all()
     )
