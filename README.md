@@ -237,8 +237,3 @@ Dự án này được cấp phép theo giấy phép MIT. Xem file `LICENSE` đ�
 Dự án này nhằm xây dựng một hệ thống backend quản lý lớp học phần và lịch thi hiệu quả, hỗ trợ theo dõi lịch học, lịch thi, giảng viên, room, và các ràng buộc nghiệp vụ nhằm tránh xung đột khi lên lịch.
 
 ---
-
-Nếu bạn muốn, tôi có thể tiếp tục viết thêm:
-- phiên bản README tiếng Anh,
-- README ngắn gọn cho GitHub homepage,
-- hoặc generate file `.env.example` / cấu hình mẫu cho dự án này.
